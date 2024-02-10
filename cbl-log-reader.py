@@ -24,10 +24,23 @@ class LogReader():
     cbScopeName = "_default"
     cbCollectionName = "_default"
     cbTtl = 86400
+    log_file_name = "cbl-log-big.txt"
 
-    def __init__(self, log_file_name):
-        self.log_file_name = log_file_name
+    def __init__(self, file):
+        self.readConfigFile(file)
         self.makeCB()
+
+    def readConfigFile(self,configFile):
+        a = open(configFile, "rb" )
+        b = json.loads(a.read())
+        self.cbHost = b["cb-cluster-host"]
+        self.cbBucketName = b["cb-bucket-name"]
+        self.cbUser = b["cb-bucket-user"]
+        self.cbPass = b["cb-bucket-user-password"]
+        self.debug = b["debug"]
+        self.cbTtl = b['cb-expire']
+        self.log_file_name = b['file-to-parse']
+        a.close()
 
     def makeCB(self):
 

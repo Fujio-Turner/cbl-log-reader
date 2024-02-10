@@ -1,0 +1,9 @@
+{
+"file-to-parse":"/home/downloads/cbl/tools/cblite/cbl-log-big.txt",
+"cb-cluster-host":"127.0.0.1",
+"cb-bucket-name":"cbl-log-reader",
+"cb-bucket-user":"Administrator",
+"cb-bucket-user-password":"fujiofujio",
+"cb-expire":86400,
+"debug":false
+}
