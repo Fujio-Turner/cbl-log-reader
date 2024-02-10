@@ -35,26 +35,32 @@ CREATE INDEX `cblDtRange_v5` ON `cbl-log-reader`.`_default`.`_default`(`dt`,`log
 
 ### RUNNING
 
+#### Consolidate The Log Files
 When you get the cbl logs you will have a bunch of logs in a folder called `cbllog` but you need to process /consolidated the files in to one big file.
 
 Run the CBL CLI tool you download from above like below to create this consolidated file.
 
 ```shell
-/home/downloads/cbl/tools/cblite logcat --out cblite-output.txt /home/downloads/cbllog/
+/home/downloads/cbl/tools/cblite logcat --out cbl-log-big.txt /home/downloads/cbllog/
 ```
 
+#### Update the config.json
 In the Terminal `cd` into the folder of the repo download location.
 
 ```shell
 cd /home/dowloads/cbl-log-reader/ 
 ```
 
-The script like below and it will insert the logs into the above bucket.
+Open and update the `config.json` with your couchbase user credintals and path and name of the consolidated log file `cbl-log-big.txt`. Save the file.
+
+#### Process and Insert the data from the file into Couchbase
+
+The script below will run the script and insert the logs into the above bucket.
 
 ```shell
-python3 cbl-log-reader.py /home/downloads/cbl/tools/cblite/cblite-output.txt
+python3 cbl-log-reader.py config.json
 ```
+#### Query Your Data
+Log into the Couchbase Server to query the `cbl-log-reader` bucket.
 
-Log into the Couchbase Server to query the bucket.
-
-In this repo there are some helpful sample queries in the file `sample-sql-queries.txt` that you can use.
+In this repo there are some helpful sample queries in the file [sample-sql-queries](sample-sql-queries.md) that you can use.
