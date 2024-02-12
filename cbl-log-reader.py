@@ -122,21 +122,27 @@ class LogReader():
     def replication_status_stats(self,log_line):
         # Define a regular expression pattern to match key-value pairs
         pattern = re.compile(r'(\w+)=((?:.*?)(?=\s\w+=|$))')
-
+        
         # Use the findall method to extract all key-value pairs from the log line
         matches = pattern.findall(log_line)
-
-        # Convert the list of tuples into a dictionary
-        stats_dict = {key: value.strip() for key, value in matches}
-
+        
+        # Convert the list of tuples into a dictionary, converting values to integers when appropriate
+        stats_dict = {}
+        for key, value in matches:
+            value = value.strip().rstrip(':').replace(',', '')  # Clean up the value and remove commas
+            try:
+                # Try to convert the value to an integer
+                stats_dict[key] = int(value)
+            except ValueError:
+                # If conversion fails, keep the value as a string
+                stats_dict[key] = value
+        
         # Check if 'activityLevel' key exists in the dictionary
         if 'activityLevel' not in stats_dict:
             return False
-
-        # Remove the colon at the end of the 'activityLevel' value if it exists
-        stats_dict['activityLevel'] = stats_dict['activityLevel'].rstrip(':')
-
+        
         return stats_dict
+
     
     def replicator_class_status(self,log_line):
         pattern = r'pushStatus=([a-zA-Z]+), pullStatus=([a-zA-Z]+), progress=(\d+/\d+(?:/\d+)?)'
