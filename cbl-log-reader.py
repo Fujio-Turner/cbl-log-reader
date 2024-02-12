@@ -119,7 +119,66 @@ class LogReader():
         else:
             return None
         
+    def replication_status_stats(self,log_line):
+        # Define a regular expression pattern to match key-value pairs
+        pattern = re.compile(r'(\w+)=((?:.*?)(?=\s\w+=|$))')
+
+        # Use the findall method to extract all key-value pairs from the log line
+        matches = pattern.findall(log_line)
+
+        # Convert the list of tuples into a dictionary
+        stats_dict = {key: value.strip() for key, value in matches}
+
+        # Check if 'activityLevel' key exists in the dictionary
+        if 'activityLevel' not in stats_dict:
+            return False
+
+        # Remove the colon at the end of the 'activityLevel' value if it exists
+        stats_dict['activityLevel'] = stats_dict['activityLevel'].rstrip(':')
+
+        return stats_dict
+    
+    def replicator_class_status(self,log_line):
+        pattern = r'pushStatus=([a-zA-Z]+), pullStatus=([a-zA-Z]+), progress=(\d+/\d+(?:/\d+)?)'
+        match = re.search(pattern, log_line)
+        if match:
+            push_status = match.group(1)
+            pull_status = match.group(2)
+            progress = match.group(3).split('/')
+            status = 0
+            if int(progress[1]) > 0:
+                status = round(int(progress[0])/int(progress[1]),4)
+            data = {
+                'pushStatus': push_status,
+                'pullStatus': pull_status,
+                'progress': {
+                    'completed': int(progress[0]),
+                    'total': int(progress[1]),
+                    'status':status
+                }
+            }
+            if len(progress) == 3:
+                data['progress']['docsPushed'] = progress[2]
+            return data
+        else:
+            return False
+        
+    def extract_query_info(self,log_line):
+        pattern = r"Created on \{Query#\d+\} with (\d+) rows \((\d+) bytes\) in ([\d.]+)ms"
+        match = re.search(pattern, log_line)
+        if match:
+            rows = int(match.group(1))
+            bytes_amount = int(match.group(2))
+            time_ms = float(match.group(3))
+            return {"rows": rows, "bytes": bytes_amount, "time_ms": time_ms}
+        else:
+            return False
+
+        
     def bigLineProcecess(self,line,seq):
+
+        if self.debug:
+            print(line)
 
         newData = {}
         newData["logLine"] = seq
@@ -138,6 +197,16 @@ class LogReader():
         newData["fileName"] = self.log_file_name
 
         if newData["type"] == "Sync":
+            
+            repActiveStats = False
+            repActiveStats = self.replication_status_stats(line)
+            if repActiveStats:
+                newData["replicatorStatus"] = repActiveStats
+            
+            repClassStats = self.replicator_class_status(line)
+            if repClassStats:
+                newData["replicatorClassStatus"] = repClassStats
+        
             sCs = self.sync_commit_stats_get(line)
             if sCs:
                 newData["syncCommitStats"] = {"numInserts":sCs[0],"insertPerSec":sCs[2],"insertTime_ms":sCs[1],"avgPerInsert_ms":round(sCs[1]/sCs[0],3)}
@@ -147,6 +216,11 @@ class LogReader():
             if a == True:
                 b = line.split(" --> ")
                 newData["queryInfo"] = json.loads(b[1])
+
+            queryExeStats = self.extract_query_info(line)
+            if queryExeStats:
+                newData["queryExeStats"] = queryExeStats
+
         newData["rawLog"] = line
 
         dict_string = json.dumps(newData, sort_keys=True)
