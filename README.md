@@ -71,3 +71,8 @@ python3 cbl-log-reader.py config.json
 Log into the Couchbase Server to query the `cbl-log-reader` bucket.
 
 In this repository, there are some helpful sample queries in the file [sample-sql-queries](sample-sql-queries.md) that you can use.
+
+
+#### RELEASE NOTES
+
+- Updated to work with new Couchbase Lite 3.2.x ISO-8601 Time Stamp format and log file format.
