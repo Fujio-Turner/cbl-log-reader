@@ -215,3 +215,201 @@ WHERE dt IS NOT MISSING
     AND logLine BETWEEN 25 AND 350
 ORDER BY dt
 ```
+
+
+----------------------------------------------------------------------------------------------------------
+
+### How Many Replicators were running?
+
+### Now you can answer when and what SG or Peer CBL (URLs/ws/wss) did you connect to?
+----------------------------------------------------------------------------------------------------------
+```SQL
+SELECT dt as `date`,
+       auth.username as auth_username,
+       auth.`type` auth_type,
+       `endpoint`,
+       COALESCE(replicationId,replicatorAddress) AS replicatorId,
+       syncType,
+       stateFrom,
+       stateTo,
+       error,
+       errorCode,
+       errorMessage,
+       replicatorStatus
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `type` = "Sync"
+    AND `endpoint` IS NOT MISSING
+ORDER BY dt
+```
+
+
+----------------------------------------------------------------------------------------------------------
+
+### Tracking a Replicator
+
+#### From the above query we can see the `replicationId` for a replicator. Example: `124`
+
+----------------------------------------------------------------------------------------------------------
+```SQL
+SELECT *
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `type` = "Sync"
+    AND 124 IN replicationIdsList
+    AND receivedChanges IS NOT MISSING
+ORDER BY dt
+```
+
+
+When the `replicationId` is not available we can use the `replicatorAddress`
+
+```SQL
+SELECT *
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `type` = "Sync"
+    AND replicatorAddress = "0x67eb321"
+ORDER BY dt
+```
+
+----------------------------------------------------------------------------------------------------------
+
+### Replicator Count Document Recieved
+
+#### From this query we can see the total changes received by a replicator. Example: `124`
+
+----------------------------------------------------------------------------------------------------------
+```SQL
+SELECT SUM(receivedChanges) AS totalChanges
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `type` = "Sync"
+    AND 124 IN replicationIdsList
+    AND receivedChanges IS NOT MISSING
+```
+
+
+----------------------------------------------------------------------------------------------------------
+
+### Group by Replicator (summarize events per replicator)
+
+#### From this query we can see the total changes received by a replicator. Example: `124`
+----------------------------------------------------------------------------------------------------------
+
+```SQL
+SELECT COALESCE(replicationId, replicatorAddress) AS replicatorId,
+       cbl.endpoint,
+       ARRAY_AGG({
+           "date": dt,
+           "syncType": syncType,
+           "stateFrom": stateFrom,
+           "stateTo": stateTo,
+           "replicatorStatus": replicatorStatus,
+           "error": error,
+           "errorCode": errorCode,
+           "errorMessage": errorMessage
+       }) AS events
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `type` = "Sync"
+    AND `endpoint` IS NOT MISSING
+GROUP BY COALESCE(replicationId, replicatorAddress), endpoint
+ORDER BY MIN(dt)
+```
+
+----------------------------------------------------------------------------------------------------------
+
+### Error Query
+
+##### This query will show all errors and their timestamps
+----------------------------------------------------------------------------------------------------------
+
+```SQL
+SELECT dt as `date`,
+       `type`,
+       COALESCE(replicationId, replicatorAddress) AS replicatorId,
+       syncType,
+       errorCode,
+       errorMessage,
+       rawLog
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `error` = true
+ORDER BY dt
+```
+
+----------------------------------------------------------------------------------------------------------
+
+### Group by Error Message
+
+##### This query will group by the error message and show the number of errors and the timestamps
+----------------------------------------------------------------------------------------------------------
+
+```SQL
+SELECT `type`,
+       errorMessage,
+       COUNT(*) AS errorCount,
+       ARRAY_AGG(dt) AS timestamps,
+       ARRAY_AGG(rawLog) AS logs
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `error` = true
+GROUP BY `type`, errorMessage
+ORDER BY errorCount DESC
+```
+
+
+----------------------------------------------------------------------------------------------------------
+
+### Bar Chart Query: to find any 'Errors' & `type` = "Sync" 
+
+##### This query will show you the number of sync events by `syncType`
+----------------------------------------------------------------------------------------------------------
+
+```SQL
+SELECT syncType, COUNT(*) AS eventCount
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `type` = "Sync"
+GROUP BY syncType
+HAVING COUNT(*) > 0
+ORDER BY eventCount DESC
+```
+
+
+
+----------------------------------------------------------------------------------------------------------
+
+### Bar Chart Query: Events by Time
+
+##### This query will show you the number of sync events by time
+----------------------------------------------------------------------------------------------------------
+
+```SQL
+SELECT SUBSTR(dt, 0, 5) AS timeBucket, 
+       COUNT(*) AS syncCount
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND `type` = "Sync"
+GROUP BY SUBSTR(dt, 0, 5)
+ORDER BY timeBucket
+```
+
+
+----------------------------------------------------------------------------------------------------------
+
+### Bar Chart Query: Errors by Time
+
+##### This query will show you the number of error events by time
+----------------------------------------------------------------------------------------------------------
+
+```SQL
+SELECT SUBSTR(dt, 0, 8) AS timeBucket,  
+       COUNT(*) AS errorCount
+FROM `cbl-log-reader`
+WHERE dt IS NOT MISSING
+    AND error = true
+GROUP BY SUBSTR(dt, 0, 8)
+ORDER BY timeBucket
+```

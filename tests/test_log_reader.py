@@ -47,7 +47,7 @@ class TestLogReader(unittest.TestCase):
         self.config_data["file-to-parse"] = log_file
         with open(self.config_file, "w") as f:
             json.dump(self.config_data, f)
-        with patch.object(LogReader, 'process_single_file') as mock_process:
+        with patch('cbl_log_reader.LogReader.process_single_file') as mock_process:
             reader = LogReader(self.config_file)
             reader.read_log()
             mock_process.assert_called_once_with(log_file)
@@ -64,19 +64,34 @@ class TestLogReader(unittest.TestCase):
             reader.read_log()
 
     def test_directory_with_matching_files(self):
-        files = ["cbl_info.txt", "cbl_error.log", "random.txt"]
-        for fname in files:
-            with open(os.path.join(self.temp_dir, fname), "w") as f:
-                f.write("17:24:02.456955| [Sync]: Test log\n")
-        with patch.object(LogReader, 'process_single_file') as mock_process:
+        # Create files in the temp directory
+        files = {
+            "cbl_info.txt": "17:24:02.456955| [Sync]: Test log\n",
+            "cbl_error.log": "17:24:02.456955| [Error]: Test error\n",
+            "random.txt": "17:24:02.456955| Random text\n"
+        }
+        for fname, content in files.items():
+            full_path = os.path.join(self.temp_dir, fname)
+            with open(full_path, "w") as f:
+                f.write(content)
+            print(f"Created file: {full_path}")
+
+        # Patch at module level to catch all calls
+        with patch('cbl_log_reader.LogReader.process_single_file') as mock_process:
             reader = LogReader(self.config_file)
+            print(f"Config file-to-parse: {reader.file_to_parse}")
             reader.read_log()
+
+            # Expected calls for valid log files only
             expected_calls = [
                 unittest.mock.call(os.path.join(self.temp_dir, "cbl_info.txt")),
                 unittest.mock.call(os.path.join(self.temp_dir, "cbl_error.log"))
             ]
+            # Debugging output
+            print(f"Mock calls: {mock_process.call_args_list}")
             mock_process.assert_has_calls(expected_calls, any_order=True)
-            self.assertEqual(mock_process.call_count, 2)
+            self.assertEqual(mock_process.call_count, 2,
+                        f"Expected 2 calls, got {mock_process.call_count}")
 
     def test_directory_no_matching_files(self):
         with open(os.path.join(self.temp_dir, "random.txt"), "w") as f:
@@ -109,18 +124,21 @@ class TestLogReader(unittest.TestCase):
                 "fileName": reader.log_file_name,
                 "replicationId": 15790,
                 "state": "busy",
-                "progress": 0.999506,  # Expected value
+                "progress": 0.999506,
                 "rawLog": log_line
             }
             mock_upsert.assert_called_once()
             args, kwargs = mock_upsert.call_args
             actual_data = args[1]
-            # Replace assertDictContainsSubset with explicit checks
             for key, value in expected_data.items():
                 if key == "progress":
-                    self.assertAlmostEqual(actual_data[key], value, places=6)  # Allow float precision
+                    self.assertAlmostEqual(actual_data[key], value, places=6)
                 else:
                     self.assertEqual(actual_data[key], value)
 
-if __name__ == '__main__':
+
+
+
+if __name__ == "__main__":
     unittest.main()
+

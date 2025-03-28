@@ -160,31 +160,43 @@ class LogReader():
         return False
         
     def getSyncConfig(self, line):
-        config_data = []
-        pattern = r'\{Coll#(\d+)\}\s*"([^"]+)":\s*\{(?:[^}]*?)"?Push"?:\s*([^,]+),\s*"?Pull"?:\s*([^,]+),\s*Options=\{([^}]*)\}'
-        matches = re.finditer(pattern, line)
-        for match in matches:
-            coll_num = int(match.group(1))
-            coll_name = match.group(2)
-            push_val = match.group(3).strip()
-            pull_val = match.group(4).strip()
-            options_str = match.group(5).strip()
-            options_dict = {}
-            if options_str:
-                options_pattern = r'(\w+)\s*:\s*"([^"]+)"|(\w+)\s*:\s*([^\s,]+)'
-                for opt_match in re.finditer(options_pattern, options_str):
-                    if opt_match.group(1) and opt_match.group(2):
-                        options_dict[opt_match.group(1)] = opt_match.group(2)
-                    elif opt_match.group(3) and opt_match.group(4):
-                        options_dict[opt_match.group(3)] = opt_match.group(4)
-            config_data.append({
-                "coll": coll_num,
-                "name": coll_name,
-                "push": push_val,
-                "pull": pull_val,
-                "options": options_dict
-            })
-        return config_data
+        # Extract the config portion between {{{ and }}}
+        config_start = line.find('{{{') + 2
+        config_end = line.rfind('}}}')
+        if config_start == 1 or config_end == -1:
+            return []
+
+        config_str = line[config_start:config_end]
+        collections = []
+
+        # Match each collection block: {Coll#N} "name": {...}
+        coll_pattern = r'\{Coll#(\d+)\}\s*"([^"]+)":\s*\{([^}]+)\}'
+        for coll_match in re.finditer(coll_pattern, config_str):
+            coll_id = int(coll_match.group(1))
+            coll_name = coll_match.group(2)
+            coll_options = coll_match.group(3)
+
+            coll_dict = {"coll": coll_id, "name": coll_name}
+            
+            # Parse Push/Pull
+            push_match = re.search(r'"Push":\s*(\w+)', coll_options)
+            pull_match = re.search(r'"Pull":\s*(\w+)', coll_options)
+            if push_match:
+                coll_dict["push"] = push_match.group(1)
+            if pull_match:
+                coll_dict["pull"] = pull_match.group(1)
+
+            # Parse channels within Options={channels:[...]}
+            channels_match = re.search(r'channels:\s*\[([^\]]+)\]', coll_options)
+            if channels_match:
+                channels_str = channels_match.group(1)
+                # Split channels, handling quoted and unquoted values
+                channels = [ch.strip().strip('"') for ch in re.split(r',\s*', channels_str) if ch.strip()]
+                coll_dict["channels"] = channels
+
+            collections.append(coll_dict)
+
+        return collections
 
     def bigLineProcecess(self, line, seq):
         if self.debug:
@@ -212,10 +224,9 @@ class LogReader():
 
         if newData["type"] == "Sync":
             ###### Sync Start ######
-            if 'Starting Replicator' and 'config:' in line:
+            if 'Starting Replicator' in line and 'config:' in line:
                 newData["syncType"] = "Start"
                 newData["replicationConfig"] = self.getSyncConfig(line)
-
                 if is_full_date:
                     repl_id_match = re.search(r'Sync\s*\{(\d+)(?:\|)?', line)
                 else:
@@ -223,27 +234,102 @@ class LogReader():
                 if repl_id_match:
                     newData["replicationId"] = int(repl_id_match.group(1))
 
-                ### Bottom of Config #####
-                auth_match = re.search(r'auth:\{(?:.*,)?\s*type:"(.*?)",\s*username:"(.*?)"(?:,.*?session:"(.*?)")?.*?\}', line)
-                if auth_match:
-                    auth_dict = {
-                        "type": auth_match.group(1),
-                        "username": auth_match.group(2)
-                    }
-                    if auth_match.group(3):
-                        auth_dict["session"] = auth_match.group(3)
-                    newData["auth"] = auth_dict
+                # Parse top-level Options={...} after collections
+                options_match = re.search(r'Options=\{([^}]+)\}', line.split('}}}')[1] if '}}}' in line else re.search(r'Options=\{([^}]+)\}', line))
+                if options_match:
+                    options_str = options_match.group(1)
+                    options_pattern = r'(\w+):(?:([^,"{]+)|"([^"]+)"|\{([^}]+)\})'
+                    for opt_match in re.finditer(options_pattern, options_str):
+                        key = opt_match.group(1)
+                        value = opt_match.group(2) or opt_match.group(3) or opt_match.group(4)
+                        if key == "auth" and value:
+                            auth_dict = {}
+                            auth_pattern = r'(\w+):(?:([^,"]+)|"([^"]+)")'
+                            for auth_match in re.finditer(auth_pattern, value):
+                                auth_key = auth_match.group(1)
+                                auth_value = auth_match.group(2) or auth_match.group(3)
+                                auth_dict[auth_key] = auth_value
+                            newData["auth"] = auth_dict
+                        elif key == "headers" and value:
+                            headers_dict = {}
+                            headers_pattern = r'(\w+-?\w*):"([^"]+)"'
+                            for header_match in re.finditer(headers_pattern, value):
+                                headers_dict[header_match.group(1)] = header_match.group(2)
+                            newData["headers"] = headers_dict
+                        else:
+                            if value in ("true", "false"):
+                                newData[key] = value == "true"
+                            elif value.isdigit():
+                                newData[key] = int(value)
+                            else:
+                                newData[key] = value.strip().strip('"')
 
-                endpoint_match = re.search(r'endpoint:\s*([^\s}]+)', line)
+                endpoint_match = re.search(r'endpoint:\s*([^\s}]+)', line) or re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
                 if endpoint_match:
-                    endpoint_value = endpoint_match.group(1).strip()
-                    newData["endpoint"] = endpoint_value.rstrip(',')
+                    newData["endpoint"] = endpoint_match.group(1).strip().rstrip(',')
 
-                self_signed_match = re.search(r'onlySelfSignedServer:(true|false)', line)
-                if self_signed_match:
-                    newData["onlySelfSignedServer"] = self_signed_match.group(1) == 'true'
+            ###### State Changes ######
+            elif '[JAVA] State changed' in line:
+                newData["syncType"] = "StateChange"
+                state_match = re.search(r'State changed (\w+) => (\w+)', line)
+                if state_match:
+                    newData["stateFrom"] = state_match.group(1)
+                    newData["stateTo"] = state_match.group(2)
+                mem_id_match = re.search(r'Replicator\{@([0-9a-fx]+)', line)
+                if mem_id_match:
+                    newData["replicatorAddress"] = mem_id_match.group(1)
+                error_match = re.search(r'CouchbaseLiteException\{[^,]+,(\d+),\'([^\']+)\'', line)
+                if error_match:
+                    newData["error"] = True
+                    newData["errorCode"] = int(error_match.group(1))
+                    newData["errorMessage"] = error_match.group(2)
+                endpoint_match = re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
+                if endpoint_match:
+                    newData["endpoint"] = endpoint_match.group(1).strip()
 
-            ###### Extract Replication IDs and Collection Number for Non-Start Lines ######
+            ###### Status Changes ######
+            elif '[JAVA] status changed' in line:
+                newData["syncType"] = "Status"
+                status_match = re.search(r'@C4ReplicatorStatus\{level=(\d+),completed=(\d+),total=(\d+),#docs=(\d+),domain=(\d+),code=(\d+),info=(\d+)\}', line)
+                if status_match:
+                    newData["replicatorStatus"] = {
+                        "level": int(status_match.group(1)),
+                        "completed": int(status_match.group(2)),
+                        "total": int(status_match.group(3)),
+                        "docs": int(status_match.group(4)),
+                        "domain": int(status_match.group(5)),
+                        "code": int(status_match.group(6)),
+                        "info": int(status_match.group(7))
+                    }
+                mem_id_match = re.search(r'Replicator\{@([0-9a-fx]+)', line)
+                if mem_id_match:
+                    newData["replicatorAddress"] = mem_id_match.group(1)
+                endpoint_match = re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
+                if endpoint_match:
+                    newData["endpoint"] = endpoint_match.group(1).strip()
+
+            ###### Rejection of Proposed Changes ######
+            elif 'Rejecting proposed change' in line:
+                newData["syncType"] = "Rejection"
+                newData["rejecting"] = True
+                reject_match = re.search(r"Rejecting proposed change '([^']+)'\s*#([^ ]+)", line)
+                if reject_match:
+                    newData["id"] = reject_match.group(1)
+                    newData["rev"] = reject_match.group(2)
+                status_match = re.search(r'status (\d+)', line)
+                if status_match:
+                    newData["status"] = int(status_match.group(1))
+                if is_full_date:
+                    repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line)
+                else:
+                    repl_id_match = re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+                if repl_id_match:
+                    newData["replicationId"] = int(repl_id_match.group(1))
+                coll_match = re.search(r'\{Coll#(\d+)\}', line)
+                if coll_match:
+                    newData["collection"] = int(coll_match.group(1))
+
+            ###### Other Sync Lines ######
             else:
                 if is_full_date:
                     repl_ids_match = re.search(r'Sync\s*\{(?:\d+\|)?([^}]+)\}', line)
@@ -270,11 +356,10 @@ class LogReader():
                         repl_ids_dict[name] = id_int
                         if id_int not in repl_ids_list:
                             repl_ids_list.append(id_int)
-                    
                     newData["replicationIds"] = repl_ids_dict
                     newData["replicationIdsList"] = repl_ids_list
 
-                coll_match = re.search(r'Coll=(\d+)', line)
+                coll_match = re.search(r'\{Coll#(\d+)\}', line)
                 if coll_match:
                     newData["collection"] = int(coll_match.group(1))
 
@@ -301,6 +386,15 @@ class LogReader():
                     "insertTime_ms": sCs[1],
                     "avgPerInsert_ms": round(sCs[1] / sCs[0], 3)
                 }
+
+        ###### WebSocket (WS) Handling ######
+        elif newData["type"] == "WS":
+            if "WebSocket CLOSED with error" in line:
+                newData["wsEvent"] = "CLOSED"
+                newData["error"] = True
+                error_start = line.find("java.net.UnknownHostException")
+                if error_start != -1:
+                    newData["errorMessage"] = line[error_start:].strip()
 
         ######## QUERY ##########
         if newData["type"] == "Query":
@@ -420,9 +514,7 @@ class LogReader():
         )
 
         if os.path.isfile(self.file_to_parse):
-            # Check if it’s a .txt or .log file
             if self.file_to_parse.lower().endswith(('.txt', '.log')):
-                # Check if the filename contains any known type
                 filename = os.path.basename(self.file_to_parse).lower()
                 if any(ft.lower() in filename for ft in file_types):
                     self.process_single_file(self.file_to_parse)
@@ -435,7 +527,6 @@ class LogReader():
                 exit()
         elif os.path.isdir(self.file_to_parse):
             matching_files = []
-            # Scan directory for matching files
             for filename in os.listdir(self.file_to_parse):
                 full_path = os.path.join(self.file_to_parse, filename)
                 if os.path.isfile(full_path) and filename.lower().endswith(('.txt', '.log')):
@@ -447,18 +538,134 @@ class LogReader():
                 print(error_message)
                 exit()
             
-            # Process each matching file
-            for file_path in matching_files:
-                self.process_single_file(file_path)
+            print(f"Total files to process: {len(matching_files)}")
+            for file_idx, file_path in enumerate(matching_files, 1):
+                print(f"Processing file {file_idx}/{len(matching_files)}: {file_path}")
+                self.process_multi_line_file(file_path)
         else:
             print(f"Error: {self.file_to_parse} is neither a valid file nor directory")
             exit()
+
+    def process_multi_line_file(self, file_path):
+        self.log_file_name = file_path
+        print('Log Processing: ', self.log_file_name)
+        print('Start of CBL Log Reader: ', datetime.now())
+        start = time.time()
+
+        # Count total lines in the file
+        with open(file_path, "r") as log_file:
+            total_lines = sum(1 for _ in log_file)
+        if total_lines == 0:
+            print("File is empty, skipping.")
+            return
+
+        bar_width = 20
+        processed_lines = 0
+        seq = 1
+        current_log_entry = ""
+        last_update_time = start  # For rate calculation
+
+        with open(file_path, "r") as log_file:
+            for line in log_file:
+                processed_lines += 1
+                line = line.rstrip('\r\n')
+                if self.is_start_of_new_log_line(line):
+                    if current_log_entry:
+                        self.bigLineProcecess(current_log_entry, seq)
+                        seq += 1
+                    current_log_entry = line
+                else:
+                    current_log_entry += " " + line.strip()
+
+                # Update progress bar and ETA every 100 lines or at the end
+                if processed_lines % 100 == 0 or processed_lines == total_lines:
+                    current_time = time.time()
+                    elapsed = current_time - start
+                    if elapsed > 0:  # Avoid division by zero
+                        rate = processed_lines / elapsed  # Lines per second
+                        remaining_lines = total_lines - processed_lines
+                        eta_seconds = remaining_lines / rate if rate > 0 else 0
+                        if eta_seconds > 60:
+                            eta_display = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s"
+                        else:
+                            eta_display = f"{eta_seconds:.1f}s"
+                    else:
+                        eta_display = "Calculating..."
+
+                    progress = processed_lines / total_lines
+                    filled = int(bar_width * progress)
+                    bar = '#' * filled + '-' * (bar_width - filled)
+                    percent = progress * 100
+                    print(f"\rProgress: [{bar}] {percent:.1f}% ({processed_lines}/{total_lines} lines) | ETA: {eta_display}", end='', flush=True)
+
+            if current_log_entry:
+                self.bigLineProcecess(current_log_entry, seq)
+                seq += 1
+
+        # Final progress update
+        end = time.time()
+        elapsed = end - start
+        print(f"\rProgress: [{'#' * bar_width}] 100.0% ({total_lines}/{total_lines} lines) | ETA: 0s", flush=True)
+        print('End of CBL Log Reader  : ', datetime.now())
+        print('Total Process Time(sec): ', elapsed)
+        print('Log Lines Processed    : ', seq - 1)
+
+    def process_single_file(self, file_path):
+        self.log_file_name = file_path
+        print('Log Processing: ', self.log_file_name)
+        print('Start of CBL Log Reader: ', datetime.now())
+        start = time.time()
+
+        with open(file_path, "r") as log_file:
+            total_lines = sum(1 for _ in log_file)
+        if total_lines == 0:
+            print("File is empty, skipping.")
+            return
+
+        bar_width = 20
+        processed_lines = 0
+        seq = 1
+
+        with open(file_path, "r") as log_file:
+            for line in log_file:
+                processed_lines += 1
+                self.bigLineProcecess(line.rstrip('\r\n'), seq)
+                seq += 1
+
+                # Update progress bar and ETA every 100 lines or at the end
+                if processed_lines % 100 == 0 or processed_lines == total_lines:
+                    current_time = time.time()
+                    elapsed = current_time - start
+                    if elapsed > 0:
+                        rate = processed_lines / elapsed
+                        remaining_lines = total_lines - processed_lines
+                        eta_seconds = remaining_lines / rate if rate > 0 else 0
+                        if eta_seconds > 60:
+                            eta_display = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s"
+                        else:
+                            eta_display = f"{eta_seconds:.1f}s"
+                    else:
+                        eta_display = "Calculating..."
+
+                    progress = processed_lines / total_lines
+                    filled = int(bar_width * progress)
+                    bar = '#' * filled + '-' * (bar_width - filled)
+                    percent = progress * 100
+                    print(f"\rProgress: [{bar}] {percent:.1f}% ({processed_lines}/{total_lines} lines) | ETA: {eta_display}", end='', flush=True)
+
+        end = time.time()
+        elapsed = end - start
+        print(f"\rProgress: [{'#' * bar_width}] 100.0% ({total_lines}/{total_lines} lines) | ETA: 0s", flush=True)
+        print('End of CBL Log Reader  : ', datetime.now())
+        print('Total Process Time(sec): ', elapsed)
+        print('Log Lines Processed    : ', seq - 1)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         config_file = sys.argv[1]
     else:
-        print("Error: No config file provided")
+        print("Error: No config.json file provided")
+        print("# python3 cbl_log_reader.py config.json")
         exit()
     log_reader = LogReader(config_file)
     log_reader.read_log()
