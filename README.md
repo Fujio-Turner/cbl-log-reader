@@ -25,6 +25,7 @@ Click on the links to learm more about [SQL++](https://docs.couchbase.com/server
 ### Requirements
 - Couchbase 7.x with Data, Query & Index (CE or EE)
 - Python 3 (3.9.18 or later)
+- Python Couchbase SDK - Download here: [Python Couchbase SDK](https://github.com/couchbase/couchbase-python-client)
 - Couchbase Lite log files - Documentation on creating CBL logs: [Couchbase Lite Troubleshooting Logs](https://docs.couchbase.com/couchbase-lite/current/swift/troubleshooting-logs.html#lbl-file-logs)
 - Couchbase Lite CLI Tool - Download here: [Couchbase Mobile Tools Releases](https://github.com/couchbaselabs/couchbase-mobile-tools/releases)
 
@@ -39,6 +40,8 @@ CREATE INDEX `cblDtRange_v5` ON `cbl-log-reader`.`_default`.`_default`(`dt`,`log
 - Install [Couchbase Python SDK](https://docs.couchbase.com/python-sdk/current/hello-world/start-using-sdk.html#quick-installation) docs here.
 
 - Download this repo in your Download folder 
+
+- (Optional) Many time the CBL logs when parsed and added into the bucket can be millions of documents. If you then in your SQL++ query use the `AND SEARCH(rawLog,"*errors*")` function, it will take a long time to process. To speed this up, you can create a FTS index on the `rawLog` field. In this repo I have a `optional_fts_index.json` that you can import into Couchbase.
 
 ### Running
 

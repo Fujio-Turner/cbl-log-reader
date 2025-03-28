@@ -1,0 +1,53 @@
+{
+    "name": "cbl_rawLog",
+    "type": "fulltext-index",
+    "params": {
+     "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "type_field",
+      "type_field": "type"
+     },
+     "mapping": {
+      "default_analyzer": "standard",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+       "dynamic": false,
+       "enabled": true,
+       "properties": {
+        "rawLog": {
+         "enabled": true,
+         "dynamic": false,
+         "fields": [
+          {
+           "index": true,
+           "name": "rawLog",
+           "type": "text"
+          }
+         ]
+        }
+       }
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type"
+     },
+     "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+     }
+    },
+    "sourceType": "gocbcore",
+    "sourceName": "cbl-log-reader",
+    "sourceUUID": "de6e716549a7df093e2ff41e1a4c69fc",
+    "sourceParams": {},
+    "planParams": {
+     "maxPartitionsPerPIndex": 64,
+     "indexPartitions": 1,
+     "numReplicas": 0
+    },
+    "uuid": "420579451b260d7b"
+   }
