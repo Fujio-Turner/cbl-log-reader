@@ -15,6 +15,7 @@ from couchbase.exceptions import CouchbaseException
 class LogReader():
 
     cb = None
+    cluster = None
     cbColl = None
     cbHost = "127.0.0.1"
     cbUser = "Administrator"
@@ -45,9 +46,9 @@ class LogReader():
     def makeCB(self):
         try:
             auth = PasswordAuthenticator(self.cbUser, self.cbPass)
-            cluster = Cluster('couchbase://' + self.cbHost, ClusterOptions(auth))
-            cluster.wait_until_ready(timedelta(seconds=5))
-            self.cb = cluster.bucket(self.cbBucketName)
+            self.cluster = Cluster('couchbase://' + self.cbHost, ClusterOptions(auth))
+            self.cluster.wait_until_ready(timedelta(seconds=5))
+            self.cb =self.cluster.bucket(self.cbBucketName)
             self.cbColl = self.cb.default_collection()
         except CouchbaseException as ex:
             print("Failed to connect to Couchbase:", ex)
@@ -207,7 +208,7 @@ class LogReader():
         timestamp_result = self.extract_timestamp(line)
         newData["dt"] = timestamp_result[0]
         newData["fullDate"] = timestamp_result[1]
-        newData["type"] = self.find_type(line, timestamp_result[1])
+        base_type = self.find_type(line, timestamp_result[1])
         is_full_date = timestamp_result[1]
 
         ### ERRORs ######
@@ -222,271 +223,285 @@ class LogReader():
 
         newData["fileName"] = self.log_file_name
 
-        if newData["type"] == "Sync":
-            ###### Sync Start ######
-            if 'Starting Replicator' in line and 'config:' in line:
-                newData["syncType"] = "Start"
-                newData["replicationConfig"] = self.getSyncConfig(line)
-                if is_full_date:
-                    repl_id_match = re.search(r'Sync\s*\{(\d+)(?:\|)?', line)
-                else:
-                    repl_id_match = re.search(r'\[Sync\]:\s*\{(\d+)(?:\|)?', line)
-                if repl_id_match:
-                    newData["replicationId"] = int(repl_id_match.group(1))
-
-                # Parse top-level Options={...} after collections
-                options_match = re.search(r'Options=\{([^}]+)\}', line.split('}}}')[1] if '}}}' in line else re.search(r'Options=\{([^}]+)\}', line))
-                if options_match:
-                    options_str = options_match.group(1)
-                    options_pattern = r'(\w+):(?:([^,"{]+)|"([^"]+)"|\{([^}]+)\})'
-                    for opt_match in re.finditer(options_pattern, options_str):
-                        key = opt_match.group(1)
-                        value = opt_match.group(2) or opt_match.group(3) or opt_match.group(4)
-                        if key == "auth" and value:
-                            auth_dict = {}
-                            auth_pattern = r'(\w+):(?:([^,"]+)|"([^"]+)")'
-                            for auth_match in re.finditer(auth_pattern, value):
-                                auth_key = auth_match.group(1)
-                                auth_value = auth_match.group(2) or auth_match.group(3)
-                                auth_dict[auth_key] = auth_value
-                            newData["auth"] = auth_dict
-                        elif key == "headers" and value:
-                            headers_dict = {}
-                            headers_pattern = r'(\w+-?\w*):"([^"]+)"'
-                            for header_match in re.finditer(headers_pattern, value):
-                                headers_dict[header_match.group(1)] = header_match.group(2)
-                            newData["headers"] = headers_dict
-                        else:
-                            if value in ("true", "false"):
-                                newData[key] = value == "true"
-                            elif value.isdigit():
-                                newData[key] = int(value)
-                            else:
-                                newData[key] = value.strip().strip('"')
-
-                endpoint_match = re.search(r'endpoint:\s*([^\s}]+)', line) or re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
-                if endpoint_match:
-                    newData["endpoint"] = endpoint_match.group(1).strip().rstrip(',')
-
-            ###### State Changes ######
-            elif '[JAVA] State changed' in line:
-                newData["syncType"] = "StateChange"
-                state_match = re.search(r'State changed (\w+) => (\w+)', line)
-                if state_match:
-                    newData["stateFrom"] = state_match.group(1)
-                    newData["stateTo"] = state_match.group(2)
-                mem_id_match = re.search(r'Replicator\{@([0-9a-fx]+)', line)
-                if mem_id_match:
-                    newData["replicatorAddress"] = mem_id_match.group(1)
-                error_match = re.search(r'CouchbaseLiteException\{[^,]+,(\d+),\'([^\']+)\'', line)
-                if error_match:
-                    newData["error"] = True
-                    newData["errorCode"] = int(error_match.group(1))
-                    newData["errorMessage"] = error_match.group(2)
-                endpoint_match = re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
-                if endpoint_match:
-                    newData["endpoint"] = endpoint_match.group(1).strip()
-
-            ###### Status Changes ######
-            elif '[JAVA] status changed' in line:
-                newData["syncType"] = "Status"
-                status_match = re.search(r'@C4ReplicatorStatus\{level=(\d+),completed=(\d+),total=(\d+),#docs=(\d+),domain=(\d+),code=(\d+),info=(\d+)\}', line)
-                if status_match:
-                    newData["replicatorStatus"] = {
-                        "level": int(status_match.group(1)),
-                        "completed": int(status_match.group(2)),
-                        "total": int(status_match.group(3)),
-                        "docs": int(status_match.group(4)),
-                        "domain": int(status_match.group(5)),
-                        "code": int(status_match.group(6)),
-                        "info": int(status_match.group(7))
-                    }
-                mem_id_match = re.search(r'Replicator\{@([0-9a-fx]+)', line)
-                if mem_id_match:
-                    newData["replicatorAddress"] = mem_id_match.group(1)
-                endpoint_match = re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
-                if endpoint_match:
-                    newData["endpoint"] = endpoint_match.group(1).strip()
-
-            ###### Rejection of Proposed Changes ######
-            elif 'Rejecting proposed change' in line:
-                newData["syncType"] = "Rejection"
-                newData["rejecting"] = True
-                reject_match = re.search(r"Rejecting proposed change '([^']+)'\s*#([^ ]+)", line)
-                if reject_match:
-                    newData["id"] = reject_match.group(1)
-                    newData["rev"] = reject_match.group(2)
-                status_match = re.search(r'status (\d+)', line)
-                if status_match:
-                    newData["status"] = int(status_match.group(1))
-                if is_full_date:
-                    repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line)
-                else:
-                    repl_id_match = re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
-                if repl_id_match:
-                    newData["replicationId"] = int(repl_id_match.group(1))
-                coll_match = re.search(r'\{Coll#(\d+)\}', line)
-                if coll_match:
-                    newData["collection"] = int(coll_match.group(1))
-
-            ###### Other Sync Lines ######
-            else:
-                if is_full_date:
-                    repl_ids_match = re.search(r'Sync\s*\{(?:\d+\|)?([^}]+)\}', line)
-                    single_id_match = re.search(r'Sync\s*\{(\d+)\}', line)
-                else:
-                    repl_ids_match = re.search(r'\[Sync\]:\s*\{(?:\d+\|)?([^}]+)\}', line)
-                    single_id_match = re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
-                
-                if single_id_match and "State:" in line:
-                    newData["replicationId"] = int(single_id_match.group(1))
-                    state_match = re.search(r'State:\s*(\w+)', line)
-                    if state_match:
-                        newData["state"] = state_match.group(1)
-                    progress_match = re.search(r'progress=([\d.]+)%', line)
-                    if progress_match:
-                        newData["progress"] = float(progress_match.group(1)) / 100
-                elif repl_ids_match:
-                    repl_ids_dict = {}
-                    repl_ids_list = []
-                    path = repl_ids_match.group(1)
-                    path_ids = re.findall(r'(C4RemoteRepl|Repl|Pusher|Puller|RevFinder)#(\d+)', path)
-                    for name, id_value in path_ids:
-                        id_int = int(id_value)
-                        repl_ids_dict[name] = id_int
-                        if id_int not in repl_ids_list:
-                            repl_ids_list.append(id_int)
-                    newData["replicationIds"] = repl_ids_dict
-                    newData["replicationIdsList"] = repl_ids_list
-
-                coll_match = re.search(r'\{Coll#(\d+)\}', line)
-                if coll_match:
-                    newData["collection"] = int(coll_match.group(1))
-
-                received_changes_match = re.search(r'Received\s+(\d+)\s+changes', line)
-                if received_changes_match:
-                    newData["receivedChanges"] = int(received_changes_match.group(1))
-
-            repActiveStats = self.replication_status_stats(line)
-            if repActiveStats:
-                newData["syncType"] = "Active"
-                newData["replicatorStatus"] = repActiveStats
-
-            repClassStats = self.replicator_class_status(line)
-            if repClassStats:
-                newData["syncType"] = "Status"
-                newData["replicatorClassStatus"] = repClassStats
-
-            sCs = self.sync_commit_stats_get(line)
-            if sCs:
-                newData["syncType"] = "Commit"
-                newData["syncCommitStats"] = {
-                    "numInserts": sCs[0],
-                    "insertPerSec": sCs[2],
-                    "insertTime_ms": sCs[1],
-                    "avgPerInsert_ms": round(sCs[1] / sCs[0], 3)
-                }
-
-        ###### WebSocket (WS) Handling ######
-        elif newData["type"] == "WS":
-            if "WebSocket CLOSED with error" in line:
-                newData["wsEvent"] = "CLOSED"
-                newData["error"] = True
-                error_start = line.find("java.net.UnknownHostException")
-                if error_start != -1:
-                    newData["errorMessage"] = line[error_start:].strip()
-
-        ######## QUERY ##########
-        if newData["type"] == "Query":
-            a = self.find_pattern_query_line_1(line, is_full_date)
-            if a:
-                b = line.split(" --> ")
-                newData["queryInfo"] = json.loads(b[1])
-
-            queryExeStats = self.extract_query_info(line)
-            if queryExeStats:
-                newData["queryExeStats"] = queryExeStats
-
-        ##### CHANGES ######
-        if newData["type"] == "Changes":
-            if is_full_date:
-                repl_id_match = re.search(r'Changes\s*\{(\d+)(?:\|)?', line)
-            else:
-                repl_id_match = re.search(r'\[Changes\]:\s*\{(\d+)(?:\|)?', line)
-            if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(1))
-
-        ###### BLIPMESSAGES #######
-        if newData["type"] == "BLIPMessages":
-            if is_full_date:
-                type_match = re.search(r'BLIPMessages\s*(\w+):', line)
-            else:
-                type_match = re.search(r'\[BLIPMessages\]:\s*(\w+):', line)
-            if type_match:
-                newData["blipMessageType"] = type_match.group(1)
-
-            repl_id_match = re.search(r'REQ #(\d+)', line)
-            if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(1))
-
-            profile_match = re.search(r'Profile:\s*(\S+)', line)
-            if profile_match:
-                newData["profile"] = profile_match.group(1)
-
-            collection_match = re.search(r'collection:\s*(\d+)', line)
-            if collection_match:
-                newData["collection"] = int(collection_match.group(1))
-
-            batch_match = re.search(r'batch:\s*(\d+)', line)
-            if batch_match:
-                newData["batch"] = int(batch_match.group(1))
-
-            send_repl_match = re.search(r'sendReplacementRevs:\s*(\d+)', line)
-            if send_repl_match:
-                newData["sendReplacementRevs"] = int(send_repl_match.group(1))
-
-            versioning_match = re.search(r'versioning:\s*(\S+)', line)
-            if versioning_match:
-                newData["versioning"] = versioning_match.group(1)
-
-            active_match = re.search(r'activeOnly:\s*(true|false)', line)
-            if active_match:
-                newData["activeOnly"] = active_match.group(1) == 'true'
-
-            revocations_match = re.search(r'revocations:\s*(true|false)', line)
-            if revocations_match:
-                newData["revocations"] = revocations_match.group(1) == 'true'
-
-            filter_match = re.search(r'filter:\s*(\S+)', line)
-            if filter_match:
-                newData["filter"] = filter_match.group(1)
-
-            channels_match = re.search(r'channels:\s*([^\n}]+)', line)
-            if channels_match:
-                channels_str = channels_match.group(1).strip()
-                newData["channels"] = channels_str.split(',')
-
-            id_match = re.search(r'id:\s*(\S+)', line)
-            if id_match:
-                newData["_id"] = id_match.group(1)
-
-            rev_match = re.search(r'rev:\s*(\S+)', line)
-            if rev_match:
-                newData["_rev"] = rev_match.group(1)
-
-            sequence_match = re.search(r'sequence:\s*"([^"]+)"', line)
-            if sequence_match:
-                newData["sequence"] = sequence_match.group(1)
-
-            history_match = re.search(r'history:\s*([^\n]+)', line)
-            if history_match:
-                history_str = history_match.group(1)
-                newData["history"] = history_str.split(',')
+        # Dispatch to type-specific processors
+        if base_type == "Sync":
+            self.process_sync(line, is_full_date, newData)
+        elif base_type == "WS":
+            self.process_ws(line, is_full_date, newData)
+        elif base_type == "Query":
+            self.process_query(line, is_full_date, newData)
+        elif base_type == "Changes":
+            self.process_changes(line, is_full_date, newData)
+        elif base_type == "BLIPMessages":
+            self.process_blip_messages(line, is_full_date, newData)
 
         newData["rawLog"] = line
         dict_string = json.dumps(newData, sort_keys=True)
         cbKey = uuid.uuid5(uuid.NAMESPACE_DNS, dict_string)
         self.cbUpsert(str(cbKey), newData, self.cbTtl)
+
+    def process_sync(self, line, is_full_date, newData):
+        ###### Sync Start ######
+        if 'Starting Replicator' in line and 'config:' in line:
+            newData["type"] = "Sync:Start"
+            newData["replicationConfig"] = self.getSyncConfig(line)
+            repl_id_match = re.search(r'Sync\s*\{(\d+)(?:\|)?', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)(?:\|)?', line)
+            if repl_id_match:
+                newData["replicationId"] = int(repl_id_match.group(1))
+
+            # Safely extract Options section
+            options_str = None
+            if '}}}' in line:
+                split_result = line.split('}}}')
+                if len(split_result) > 1:
+                    options_str = split_result[1].strip()  # Ensure no empty string
+                    if not options_str and self.debug:
+                        print(f"Warning: '{{{{}}}}' found but no usable data follows in line: {line}")
+                else:
+                    if self.debug:
+                        print(f"Warning: '{{{{}}}}' found but no subsequent data in line: {line}")
+            else:
+                options_str = line
+
+            options_match = re.search(r'Options=\{([^}]+)\}', options_str) if options_str else None
+            if options_match:
+                options_str = options_match.group(1)
+                options_pattern = r'(\w+):(?:([^,"{]+)|"([^"]+)"|\{([^}]+)\})'
+                for opt_match in re.finditer(options_pattern, options_str):
+                    key = opt_match.group(1)
+                    value = opt_match.group(2) or opt_match.group(3) or opt_match.group(4)
+                    if key == "auth" and value:
+                        auth_dict = {}
+                        auth_pattern = r'(\w+):(?:([^,"]+)|"([^"]+)")'
+                        for auth_match in re.finditer(auth_pattern, value):
+                            auth_key = auth_match.group(1)
+                            auth_value = auth_match.group(2) or auth_match.group(3)
+                            auth_dict[auth_key] = auth_value
+                        newData["auth"] = auth_dict
+                    elif key == "headers" and value:
+                        headers_dict = {}
+                        headers_pattern = r'(\w+-?\w*):"([^"]+)"'
+                        for header_match in re.finditer(headers_pattern, value):
+                            headers_dict[header_match.group(1)] = header_match.group(2)
+                        newData["headers"] = headers_dict
+                    else:
+                        if value in ("true", "false"):
+                            newData[key] = value == "true"
+                        elif value.isdigit():
+                            newData[key] = int(value)
+                        else:
+                            newData[key] = value.strip().strip('"')
+
+            endpoint_match = re.search(r'endpoint:\s*([^\s}]+)', line) or re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
+            if endpoint_match:
+                newData["endpoint"] = endpoint_match.group(1).strip().rstrip(',')
+
+        ###### State Changes ######
+        elif '[JAVA] State changed' in line:
+            newData["type"] = "Sync:StateChange"
+            state_match = re.search(r'State changed (\w+) => (\w+)', line)
+            if state_match:
+                newData["stateFrom"] = state_match.group(1)
+                newData["stateTo"] = state_match.group(2)
+            mem_id_match = re.search(r'Replicator\{@([0-9a-fx]+)', line)
+            if mem_id_match:
+                newData["replicatorAddress"] = mem_id_match.group(1)
+            error_match = re.search(r'CouchbaseLiteException\{[^,]+,(\d+),\'([^\']+)\'', line)
+            if error_match:
+                newData["error"] = True
+                newData["errorCode"] = int(error_match.group(1))
+                newData["errorMessage"] = error_match.group(2)
+            endpoint_match = re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
+            if endpoint_match:
+                newData["endpoint"] = endpoint_match.group(1).strip()
+
+        ###### Status Changes ######
+        elif '[JAVA] status changed' in line:
+            newData["type"] = "Sync:Status"
+            status_match = re.search(r'@C4ReplicatorStatus\{level=(\d+),completed=(\d+),total=(\d+),#docs=(\d+),domain=(\d+),code=(\d+),info=(\d+)\}', line)
+            if status_match:
+                newData["replicatorStatus"] = {
+                    "level": int(status_match.group(1)),
+                    "completed": int(status_match.group(2)),
+                    "total": int(status_match.group(3)),
+                    "docs": int(status_match.group(4)),
+                    "domain": int(status_match.group(5)),
+                    "code": int(status_match.group(6)),
+                    "info": int(status_match.group(7))
+                }
+            mem_id_match = re.search(r'Replicator\{@([0-9a-fx]+)', line)
+            if mem_id_match:
+                newData["replicatorAddress"] = mem_id_match.group(1)
+            endpoint_match = re.search(r'URLEndpoint\{url=([^\}]+)\}', line)
+            if endpoint_match:
+                newData["endpoint"] = endpoint_match.group(1).strip()
+
+        ###### Rejection of Proposed Changes ######
+        elif 'Rejecting proposed change' in line:
+            newData["type"] = "Sync:Rejection"
+            newData["rejecting"] = True
+            reject_match = re.search(r"Rejecting proposed change '([^']+)'\s*#([^ ]+)", line)
+            if reject_match:
+                newData["id"] = reject_match.group(1)
+                newData["rev"] = reject_match.group(2)
+            status_match = re.search(r'status (\d+)', line)
+            if status_match:
+                newData["status"] = int(status_match.group(1))
+            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            if repl_id_match:
+                newData["replicationId"] = int(repl_id_match.group(1))
+            coll_match = re.search(r'\{Coll#(\d+)\}', line)
+            if coll_match:
+                newData["collection"] = int(coll_match.group(1))
+
+        ###### Other Sync Lines ######
+        else:
+            repl_ids_match = re.search(r'Sync\s*\{(?:\d+\|)?([^}]+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(?:\d+\|)?([^}]+)\}', line)
+            single_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            
+            if single_id_match and "State:" in line:
+                newData["type"] = "Sync:State"
+                newData["replicationId"] = int(single_id_match.group(1))
+                state_match = re.search(r'State:\s*(\w+)', line)
+                if state_match:
+                    newData["state"] = state_match.group(1)
+                progress_match = re.search(r'progress=([\d.]+)%', line)
+                if progress_match:
+                    newData["progress"] = float(progress_match.group(1)) / 100
+            elif repl_ids_match:
+                newData["type"] = "Sync:Other"
+                repl_ids_dict = {}
+                repl_ids_list = []
+                path = repl_ids_match.group(1)
+                path_ids = re.findall(r'(C4RemoteRepl|Repl|Pusher|Puller|RevFinder)#(\d+)', path)
+                for name, id_value in path_ids:
+                    id_int = int(id_value)
+                    repl_ids_dict[name] = id_int
+                    if id_int not in repl_ids_list:
+                        repl_ids_list.append(id_int)
+                newData["replicationIds"] = repl_ids_dict
+                newData["replicationIdsList"] = repl_ids_list
+
+            coll_match = re.search(r'\{Coll#(\d+)\}', line)
+            if coll_match:
+                newData["collection"] = int(coll_match.group(1))
+
+            received_changes_match = re.search(r'Received\s+(\d+)\s+changes', line)
+            if received_changes_match:
+                newData["receivedChanges"] = int(received_changes_match.group(1))
+
+        # These checks can override type if they match
+        repActiveStats = self.replication_status_stats(line)
+        if repActiveStats:
+            newData["type"] = "Sync:Active"
+            newData["replicatorStatus"] = repActiveStats
+
+        repClassStats = self.replicator_class_status(line)
+        if repClassStats:
+            newData["type"] = "Sync:Status"
+            newData["replicatorClassStatus"] = repClassStats
+
+        sCs = self.sync_commit_stats_get(line)
+        if sCs:
+            newData["type"] = "Sync:Commit"
+            newData["syncCommitStats"] = {
+                "numInserts": sCs[0],
+                "insertPerSec": sCs[2],
+                "insertTime_ms": sCs[1],
+                "avgPerInsert_ms": round(sCs[1] / sCs[0], 3)
+            }
+
+    def process_ws(self, line, is_full_date, newData):
+        newData["type"] = "WS"
+        if "WebSocket CLOSED with error" in line:
+            newData["wsEvent"] = "CLOSED"
+            newData["error"] = True
+            error_start = line.find("java.net.UnknownHostException")
+            if error_start != -1:
+                newData["errorMessage"] = line[error_start:].strip()
+
+    def process_query(self, line, is_full_date, newData):
+        newData["type"] = "Query"
+        a = self.find_pattern_query_line_1(line, is_full_date)
+        if a:
+            b = line.split(" --> ")
+            newData["queryInfo"] = json.loads(b[1])
+
+        queryExeStats = self.extract_query_info(line)
+        if queryExeStats:
+            newData["queryExeStats"] = queryExeStats
+
+    def process_changes(self, line, is_full_date, newData):
+        newData["type"] = "Changes"
+        repl_id_match = re.search(r'Changes\s*\{(\d+)(?:\|)?', line) if is_full_date else re.search(r'\[Changes\]:\s*\{(\d+)(?:\|)?', line)
+        if repl_id_match:
+            newData["replicationId"] = int(repl_id_match.group(1))
+
+    def process_blip_messages(self, line, is_full_date, newData):
+        type_match = re.search(r'BLIPMessages\s*(\w+):', line) if is_full_date else re.search(r'\[BLIPMessages\]:\s*(\w+):', line)
+        if type_match and type_match.group(1) in ("SENDING", "RECEIVED"):
+            newData["type"] = f"BLIPMessages:{type_match.group(1)}"
+        else:
+            newData["type"] = "BLIPMessages:Unknown"
+
+        repl_id_match = re.search(r'REQ #(\d+)', line) or re.search(r'RES #(\d+)', line)
+        if repl_id_match:
+            newData["replicationId"] = int(repl_id_match.group(1))
+
+        profile_match = re.search(r'Profile:\s*(\S+)', line)
+        if profile_match:
+            newData["profile"] = profile_match.group(1)
+
+        collection_match = re.search(r'collection:\s*(\d+)', line)
+        if collection_match:
+            newData["collection"] = int(collection_match.group(1))
+
+        batch_match = re.search(r'batch:\s*(\d+)', line)
+        if batch_match:
+            newData["batch"] = int(batch_match.group(1))
+
+        send_repl_match = re.search(r'sendReplacementRevs:\s*(\d+)', line)
+        if send_repl_match:
+            newData["sendReplacementRevs"] = int(send_repl_match.group(1))
+
+        versioning_match = re.search(r'versioning:\s*(\S+)', line)
+        if versioning_match:
+            newData["versioning"] = versioning_match.group(1)
+
+        active_match = re.search(r'activeOnly:\s*(true|false)', line)
+        if active_match:
+            newData["activeOnly"] = active_match.group(1) == 'true'
+
+        revocations_match = re.search(r'revocations:\s*(true|false)', line)
+        if revocations_match:
+            newData["revocations"] = revocations_match.group(1) == 'true'
+
+        filter_match = re.search(r'filter:\s*(\S+)', line)
+        if filter_match:
+            newData["filter"] = filter_match.group(1)
+
+        if "filter: sync_gateway/bychannel" in line:
+            channels_match = re.search(r'channels:\s*([^\n}]+)', line)
+            if channels_match:
+                channels_str = channels_match.group(1).strip()
+                newData["channels"] = [ch.strip() for ch in channels_str.split(',') if ch.strip()]
+
+        id_match = re.search(r'id:\s*(\S+)', line)
+        if id_match:
+            newData["_id"] = id_match.group(1)
+
+        rev_match = re.search(r'rev:\s*(\S+)', line)
+        if rev_match:
+            newData["_rev"] = rev_match.group(1)
+
+        sequence_match = re.search(r'sequence:\s*"([^"]+)"', line)
+        if sequence_match:
+            newData["sequence"] = sequence_match.group(1)
+
+        history_match = re.search(r'history:\s*([^\n]+)', line)
+        if history_match:
+            history_str = history_match.group(1)
+            newData["history"] = history_str.split(',')
 
     def process_single_file(self, file_path):
         self.log_file_name = file_path
@@ -505,6 +520,99 @@ class LogReader():
         print('Total Process Time(sec): ', end - start)
         print('Log Lines Processed    : ', seq - 1)
 
+    def generate_report(self):
+        report = {
+            "logDtOldest": None,
+            "logDtNewest": None,
+            "types": [],
+            "errorStatus": [],
+            "replicationStats": []
+        }
+
+        try:
+            # Query for oldest and newest timestamps
+            timestamp_query = """
+                SELECT MIN(cbl.dt) AS oldest, MAX(cbl.dt) AS newest
+                FROM `cbl-log-reader` AS cbl
+                WHERE cbl.dt IS NOT MISSING
+            """
+            timestamp_result = self.cluster.query(timestamp_query, QueryOptions(timeout=timedelta(seconds=10)))
+            for row in timestamp_result:
+                if self.debug:
+                    print(f"Timestamp query result: {row}")
+                report["logDtOldest"] = row["oldest"]
+                report["logDtNewest"] = row["newest"]
+
+            # Query for type counts
+            type_query = """
+                SELECT COUNT(cbl.`type`) AS typeCount, cbl.`type`
+                FROM `cbl-log-reader` AS cbl
+                WHERE cbl.dt IS NOT MISSING AND cbl.`type` IS NOT NULL
+                GROUP BY cbl.`type`
+                ORDER BY cbl.`type`
+            """
+            type_result = self.cluster.query(type_query, QueryOptions(timeout=timedelta(seconds=10)))
+            type_rows = list(type_result)
+            if self.debug:
+                print(f"Type query result: {type_rows}")
+            if not type_rows and self.debug:
+                print("Warning: No type counts found. Check if 'type' field is populated in documents.")
+            report["types"] = [{"type": row["type"], "typeCount": row["typeCount"]} for row in type_rows]
+
+            # Query for error counts
+            error_query = """
+                SELECT COUNT(cbl.`type`) AS errorCount, cbl.`type`
+                FROM `cbl-log-reader` AS cbl
+                WHERE cbl.dt IS NOT MISSING AND cbl.`error` = True AND cbl.`type` IS NOT NULL
+                GROUP BY cbl.`type`
+                ORDER BY cbl.`type`
+            """
+            error_result = self.cluster.query(error_query, QueryOptions(timeout=timedelta(seconds=10)))
+            error_rows = list(error_result)
+            if self.debug:
+                print(f"Error query result: {error_rows}")
+            report["errorStatus"] = [{"type": row["type"], "errorCount": row["errorCount"]} for row in error_rows]
+
+            # Query for replication stats with start time
+            replication_query = """
+                SELECT 
+                    cbl.replicationId,
+                    COUNT(*) AS totalCount,
+                    SUM(CASE WHEN cbl.type = 'Sync:Rejection' THEN 1 ELSE 0 END) AS rejectionCount,
+                    SUM(COALESCE(cbl.syncCommitStats.numInserts, 0)) + SUM(COALESCE(cbl.replicatorStatus.docs, 0)) AS documentCount,
+                    MIN(cbl.dt) AS startTime
+                FROM `cbl-log-reader` AS cbl
+                WHERE cbl.dt IS NOT MISSING AND cbl.replicationId IS NOT NULL
+                GROUP BY cbl.replicationId
+            """
+            replication_result = self.cluster.query(replication_query, QueryOptions(timeout=timedelta(seconds=10)))
+            replication_rows = list(replication_result)
+            if self.debug:
+                print(f"Replication query result: {replication_rows}")
+            
+            # Sort by startTime and build replicationStats
+            replication_stats = [
+                {
+                    "replicationProcessId": row["replicationId"],
+                    "totalLogEntries": row["totalCount"],
+                    "localWriteRejectionCount": row["rejectionCount"],
+                    "documentsProcessedCount": row["documentCount"],
+                    "startTime": row["startTime"]
+                } for row in replication_rows
+            ]
+            report["replicationStats"] = sorted(replication_stats, key=lambda x: x["startTime"])
+
+            # Upsert the report document
+            report_key = "log_report"
+            self.cbUpsert(report_key, report, self.cbTtl)
+            if self.debug:
+                print(f"Generated report document with key: {report_key}")
+
+        except CouchbaseException as e:
+            print(f"Failed to generate report: {e}")
+        except KeyError as ke:
+            print(f"KeyError in report generation: {ke}")
+
     def read_log(self):
         file_types = self.file_parse_type.split('|')
         error_message = (
@@ -518,6 +626,7 @@ class LogReader():
                 filename = os.path.basename(self.file_to_parse).lower()
                 if any(ft.lower() in filename for ft in file_types):
                     self.process_single_file(self.file_to_parse)
+                    self.generate_report()
                 else:
                     print(f"Error: {self.file_to_parse} does not match known log types ({self.file_parse_type})")
                     print(error_message)
@@ -542,9 +651,33 @@ class LogReader():
             for file_idx, file_path in enumerate(matching_files, 1):
                 print(f"Processing file {file_idx}/{len(matching_files)}: {file_path}")
                 self.process_multi_line_file(file_path)
+            self.generate_report()
         else:
             print(f"Error: {self.file_to_parse} is neither a valid file nor directory")
             exit()
+
+        # Post-script report message
+        report_message = """
+        Report Generated:
+        A report document has been created in Couchbase under the key 'log_report' in the 'cbl-log-reader' bucket.
+        - What it does: This report summarizes key metrics from your Couchbase Lite log files.
+        - What it analyzes:
+        * 'logDtOldest' and 'logDtNewest': The earliest and latest timestamps in the logs, showing the time range covered.
+        * 'types': Counts of each log type (e.g., 'Sync:State', 'BLIPMessages:SENDING'), showing activity distribution.
+        * 'errorStatus': Counts of errors by log type, highlighting where issues occurred.
+        * 'replicationStats': Details on replication processes, including:
+            - 'replicationProcessId': Unique ID of each replicator.
+            - 'totalLogEntries': Number of log lines for that replicator.
+            - 'localWriteRejectionCount': Number of local write rejections (failed sync attempts).
+            - 'documentsProcessedCount': Total documents processed (inserted or tracked).
+            - 'startTime': When the replicator first appeared in the logs (sorted chronologically).
+        - How to understand it:
+        * Check 'replicationStats' for replication health—high 'localWriteRejectionCount' vs. 'documentsProcessedCount' indicates sync issues.
+        * Use 'types' and 'errorStatus' to spot frequent or error-prone log categories.
+        * Query it in Couchbase with: SELECT * FROM `cbl-log-reader` USE KEYS('log_report')
+        """
+        print(report_message)
+
 
     def process_multi_line_file(self, file_path):
         self.log_file_name = file_path
@@ -668,4 +801,5 @@ if __name__ == "__main__":
         print("# python3 cbl_log_reader.py config.json")
         exit()
     log_reader = LogReader(config_file)
-    log_reader.read_log()
+    #log_reader.read_log()
+    log_reader.generate_report()

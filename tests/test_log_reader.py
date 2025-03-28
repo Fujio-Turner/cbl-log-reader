@@ -120,7 +120,7 @@ class TestLogReader(unittest.TestCase):
                 "logLine": 1,
                 "dt": "17:24:02.456955",
                 "fullDate": False,
-                "type": "Sync",
+                "type": "Sync:State",  # Updated to match new type format
                 "fileName": reader.log_file_name,
                 "replicationId": 15790,
                 "state": "busy",

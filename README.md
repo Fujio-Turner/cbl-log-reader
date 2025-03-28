@@ -2,48 +2,63 @@
 
 ## The Problem
 
-You have the Couchbase Lite log files, but you need help understanding what they mean.
+You have Couchbase Lite log files, but you need help understanding what they mean and identifying issues like replication errors or performance bottlenecks.
 
 ## This Project
 
-This project will process the files and put them into a local Couchbase bucket to make more sense of them.
+This project processes Couchbase Lite log files and inserts them into a local Couchbase bucket (`cbl-log-reader`) for easier analysis. It aggregates, consolidates, and enriches the logs, enabling powerful SQL++ (N1QL) and Full Text Search (FTS) queries such as:
+- `GROUP BY`
+- `ORDER BY`
+- `BETWEEN ... AND ...`
+- `SEARCH(rawLog, "*pull*")`
+- `MIN`, `MAX`, and more.
 
-This projects will:
+Additionally, it generates a summary report (`log_report`) to provide insights into log activity, errors, and replication performance.
 
-Aggregate , consolidate and process the logs. So you can do SQL++ & CB FTS on them enabling things like:
-* `GROUP BY` 
-* `ORDER BY`
-* `BETWEEN TO AND FROM`
-* `SEARCH(rawLog,"*pull*")`
-* `MIN` , `MAX` and more.
-
+### Features
+- **Log Parsing**: Processes single files or directories of `.txt` or `.log` files matching types like `info`, `error`, `debug`, `verbose`, or `warning`.
+- **Type-Specific Processing**: Breaks down logs into categories (e.g., `Sync:State`, `BLIPMessages:SENDING`) for detailed analysis.
+- **Replication Tracking**: Monitors replication processes, including document counts and rejection errors.
+- **Report Generation**: Creates a `log_report` document summarizing:
+  - Oldest and newest log timestamps.
+  - Counts of log types and errors.
+  - Replication stats (e.g., total entries, rejections, documents processed), sorted by start time.
+- **User Guidance**: Outputs a post-processing message explaining the report and how to query it.
 
 ### Requirements
-- Couchbase 7.x with Data, Query & Index (CE or EE)
-- Python 3 (3.9.18 or later)
-- Python Couchbase SDK - Download here: [Python Couchbase SDK](https://github.com/couchbase/couchbase-python-client)
-- Couchbase Lite log files - Documentation on creating CBL logs: [Couchbase Lite Troubleshooting Logs](https://docs.couchbase.com/couchbase-lite/current/swift/troubleshooting-logs.html#lbl-file-logs)
-- Couchbase Lite CLI Tool - Download here: [Couchbase Mobile Tools Releases](https://github.com/couchbaselabs/couchbase-mobile-tools/releases)
+- **Couchbase Server**: 7.x with Data, Query, and Index services (Community or Enterprise Edition).
+- **Python**: 3.9.18 or later.
+- **Python Couchbase SDK**: Install via [Python Couchbase SDK](https://github.com/couchbase/couchbase-python-client).
+- **Couchbase Lite Log Files**: See [Couchbase Lite Troubleshooting Logs](https://docs.couchbase.com/couchbase-lite/current/swift/troubleshooting-logs.html#lbl-file-logs) for generating logs.
+- **Couchbase Lite CLI Tool** (optional): For converting binary logs, download from [Couchbase Mobile Tools Releases](https://github.com/couchbaselabs/couchbase-mobile-tools/releases).
 
-### Set Up
-- Create a Couchbase bucket called: `cbl-log-reader`.`_default`.`_default`
-- Create this index on the bucket:
+### Setup
+1. **Create a Couchbase Bucket**:
+   - Name: `cbl-log-reader`, Scope: `_default`, Collection: `_default`.
 
-```SQL
-CREATE INDEX `cblDtRange_v5` ON `cbl-log-reader`.`_default`.`_default`(`dt`,`logLine`,`type`,`error`,`fileName`)
-```
+2. **Create Indexes**:
+   - Replace older indexes with these optimized ones:
+     ```sql
+     CREATE INDEX idx_dt ON `cbl-log-reader` (`dt`);
+     CREATE INDEX idx_type_dt ON `cbl-log-reader` (`type`, `dt`);
+     CREATE INDEX idx_error_type_dt ON `cbl-log-reader` (`error`, `type`, `dt`);
+     CREATE INDEX idx_repl_dt_type ON `cbl-log-reader` (`replicationId`, `dt`, `type`);
+     ```
+   - These support the report queries efficiently.
 
-- Install [Couchbase Python SDK](https://docs.couchbase.com/python-sdk/current/hello-world/start-using-sdk.html#quick-installation) docs here.
+3. **Install Python SDK**:
+   - Follow [Couchbase Python SDK Quick Installation](https://docs.couchbase.com/python-sdk/current/hello-world/start-using-sdk.html#quick-installation).
 
-- Download this repo in your Download folder 
+4. **Download This Repo**:
+   - Clone or download to your preferred directory (e.g., `/home/downloads/cbl-log-reader/`).
 
-- (Optional) Many time the CBL logs when parsed and added into the bucket can be millions of documents. If you then in your SQL++ query use the `AND SEARCH(rawLog,"*errors*")` function, it will take a long time to process. To speed this up, you can create a FTS index on the `rawLog` field. In this repo I have a `optional_fts_index.json` that you can import into Couchbase.
+5. **Optional FTS Index**:
+   - For faster searches on `rawLog` (e.g., `SEARCH(rawLog, "*errors*")`), import `optional_fts_index.json` from this repo into Couchbase’s Full Text Search service. Useful for large datasets (millions of documents).
 
 ### Running
 
-#### (Optional) Binary Log Files
-Is the file you want to parse is a binary log file, you can use the `cblite logcat` tool to convert it to a text file.
-
+#### (Optional) Convert Binary Log Files
+If your logs are binary, use the `cblite logcat` tool to convert them to text:
 ```shell
 /home/downloads/cbl/tools/cblite logcat --out cbl-log-info.txt /home/downloads/cbllog/
 ```
@@ -82,8 +97,56 @@ Log into the Couchbase Server to query the `cbl-log-reader` bucket.
 
 In this repository, there are some helpful sample queries in the file [sample-sql-queries](sample-sql-queries.md) that you can use.
 
+- Access the report: `SELECT * FROM cbl-log-reader USE KEYS('log_report')`
+
+
+
+#### Understanding the Report
+After processing, the script outputs a message about the `log_report` document:
+- **Purpose: Summarizes log metrics.
+
+- **Analyzes:
+    - Timestamps (logDtOldest, logDtNewest): Log time range.
+
+    - Types (types): Frequency of log categories.
+
+    - Errors (errorStatus): Error counts by type.
+
+    - **Replication (replicationStats): Per-replicator stats, ordered by start time, including log entries, local write rejections, and documents processed.
+
+    - **Usage: Check replication health (e.g., high rejections vs. documents) and error-prone types.
+
+
 
 #### RELEASE NOTES
 
-- Updated to work with new Couchbase Lite 3.2.x ISO-8601 Time Stamp format and log file format.
-- Enhanced to process multiple log files or directories directly, eliminating the need for consolidation into a single big log file.
+
+- Latest Updates:
+    - Refactored log processing into type-specific functions (e.g., `process_sync`, `process_blip_messages`) for maintainability.
+
+    - Added `log_report` document with detailed replication stats, sorted by `startTime`.
+
+    - Updated indexes for better query performance.
+
+    - Enhanced user output with a post-run report explanation.
+
+- Compatibility: Supports Couchbase Lite 3.2.x ISO-8601 timestamps and log formats.
+
+- Flexibility: Processes multiple log files or directories directly, no consolidation needed.
+
+
+
+
+### Key Updates
+1. **Features Section**: Added details about type-specific processing, replication tracking, and the new report.
+2. **Setup**: Updated indexes to the new set (`idx_dt`, etc.), replacing `type_dt_v1` and others.
+3. **Running**: Clarified `config.json` options and the report output.
+4. **Report Explanation**: Integrated the post-script message into the README for visibility.
+5. **Release Notes**: Highlighted refactoring, report addition, index updates, and user guidance.
+
+### Action
+- Replace your `README.md` with this version in your repo.
+- Verify it reads well and covers everything you want users to know.
+- If you’d like more examples (e.g., sample report output), let me know!
+
+This should give users a clear picture of the script’s capabilities and how to leverage the new `log_report`. What do you think?

@@ -5,7 +5,9 @@
 
 ----------------------------------------------------------------------------------------------------------
 ```SQL
-CREATE INDEX `cblDtRange_v5` ON `cbl-log-reader`(`dt`,`logLine`,`type`,`error`,`fileName`)
+CREATE INDEX type_dt_v1 ON `cbl-log-reader` (`type`, `dt`);
+CREATE INDEX error_type_dt_v1 ON `cbl-log-reader` (`error`, `type`, `dt`);
+CREATE INDEX rep_dt_type_v1 ON `cbl-log-reader` (`replicationId`, `dt`, `type`);
 ```
 
 
@@ -36,12 +38,13 @@ ORDER BY cType DESC
 ----------------------------------------------------------------------------------------------------------
 
 ```SQL
-SELECT COUNT(errorType) as cError, errorType
+SELECT COUNT(errorType) AS cError,
+       errorType
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
     AND `type` IS NOT MISSING
     AND logLine IS NOT MISSING
-    AND error IS not MISSING
+    AND error IS NOT MISSING
 GROUP BY errorType
 ORDER BY cError DESC
 ```
@@ -57,7 +60,7 @@ SELECT *
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
     AND `type` IS NOT NULL
-    AND `error` IS NOT MISSING
+    AND `error` = True
 ORDER BY dt
 LIMIT 1000
 OFFSET 0
@@ -224,8 +227,8 @@ ORDER BY dt
 ### Now you can answer when and what SG or Peer CBL (URLs/ws/wss) did you connect to?
 ----------------------------------------------------------------------------------------------------------
 ```SQL
-SELECT dt as `date`,
-       auth.username as auth_username,
+SELECT dt AS `date`,
+       auth.username AS auth_username,
        auth.`type` auth_type,
        `endpoint`,
        COALESCE(replicationId,replicatorAddress) AS replicatorId,
@@ -238,7 +241,6 @@ SELECT dt as `date`,
        replicatorStatus
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
-    AND `type` = "Sync"
     AND `endpoint` IS NOT MISSING
 ORDER BY dt
 ```
@@ -255,7 +257,6 @@ ORDER BY dt
 SELECT *
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
-    AND `type` = "Sync"
     AND 124 IN replicationIdsList
     AND receivedChanges IS NOT MISSING
 ORDER BY dt
@@ -268,7 +269,6 @@ When the `replicationId` is not available we can use the `replicatorAddress`
 SELECT *
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
-    AND `type` = "Sync"
     AND replicatorAddress = "0x67eb321"
 ORDER BY dt
 ```
@@ -284,7 +284,6 @@ ORDER BY dt
 SELECT SUM(receivedChanges) AS totalChanges
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
-    AND `type` = "Sync"
     AND 124 IN replicationIdsList
     AND receivedChanges IS NOT MISSING
 ```
@@ -299,7 +298,7 @@ WHERE dt IS NOT MISSING
 
 ```SQL
 SELECT COALESCE(replicationId, replicatorAddress) AS replicatorId,
-       cbl.endpoint,
+       `endpoint`,
        ARRAY_AGG({
            "date": dt,
            "syncType": syncType,
@@ -312,9 +311,8 @@ SELECT COALESCE(replicationId, replicatorAddress) AS replicatorId,
        }) AS events
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
-    AND `type` = "Sync"
     AND `endpoint` IS NOT MISSING
-GROUP BY COALESCE(replicationId, replicatorAddress), endpoint
+GROUP BY COALESCE(replicationId, replicatorAddress), `endpoint`
 ORDER BY MIN(dt)
 ```
 
@@ -371,7 +369,7 @@ ORDER BY errorCount DESC
 SELECT syncType, COUNT(*) AS eventCount
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
-    AND `type` = "Sync"
+    AND SPLIT(`type`,":")[0] = "Sync"
 GROUP BY syncType
 HAVING COUNT(*) > 0
 ORDER BY eventCount DESC
@@ -391,7 +389,7 @@ SELECT SUBSTR(dt, 0, 5) AS timeBucket,
        COUNT(*) AS syncCount
 FROM `cbl-log-reader`
 WHERE dt IS NOT MISSING
-    AND `type` = "Sync"
+     AND SPLIT(`type`,":")[0] = "Sync"
 GROUP BY SUBSTR(dt, 0, 5)
 ORDER BY timeBucket
 ```
