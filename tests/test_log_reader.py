@@ -4,7 +4,7 @@ import json
 import tempfile
 import shutil
 from unittest.mock import patch, MagicMock
-from cbl_log_reader import LogReader  # Correct import
+from cbl_log_reader import LogReader  # Adjust based on your file structure
 
 class TestLogReader(unittest.TestCase):
 
@@ -76,8 +76,8 @@ class TestLogReader(unittest.TestCase):
                 f.write(content)
             print(f"Created file: {full_path}")
 
-        # Patch at module level to catch all calls
-        with patch('cbl_log_reader.LogReader.process_single_file') as mock_process:
+        # Patch process_multi_line_file instead of process_single_file
+        with patch('cbl_log_reader.LogReader.process_multi_line_file') as mock_process:
             reader = LogReader(self.config_file)
             print(f"Config file-to-parse: {reader.file_to_parse}")
             reader.read_log()
@@ -91,7 +91,7 @@ class TestLogReader(unittest.TestCase):
             print(f"Mock calls: {mock_process.call_args_list}")
             mock_process.assert_has_calls(expected_calls, any_order=True)
             self.assertEqual(mock_process.call_count, 2,
-                        f"Expected 2 calls, got {mock_process.call_count}")
+                            f"Expected 2 calls, got {mock_process.call_count}")
 
     def test_directory_no_matching_files(self):
         with open(os.path.join(self.temp_dir, "random.txt"), "w") as f:
@@ -136,9 +136,5 @@ class TestLogReader(unittest.TestCase):
                 else:
                     self.assertEqual(actual_data[key], value)
 
-
-
-
 if __name__ == "__main__":
     unittest.main()
-
