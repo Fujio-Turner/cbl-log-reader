@@ -1,2 +1,29 @@
+# Python-specific
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+
+# macOS-specific
 .DS_Store
+
+# Temporary/test files
+random.txt
+*.log
+*.tmp
+
+# Optional/documentation files (uncomment if you don’t want these in repo)
+# optional_fts_index.json
+# sample-sql-queries.md
+
+# Build/dependency files (uncomment if not using Pipfile)
 Pipfile
+Pipfile.lock
+
+# IDE-specific (optional, add if you use these)
+.vscode/
+.idea/

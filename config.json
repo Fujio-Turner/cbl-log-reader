@@ -1,9 +1,10 @@
 {
-"file-to-parse":"path/to/cbl-log-big.txt",
-"cb-cluster-host":"127.0.0.1",
-"cb-bucket-name":"cbl-log-reader",
-"cb-bucket-user":"Administrator",
-"cb-bucket-user-password":"password",
-"cb-expire":0,
-"debug":false
+    "file-to-parse": "/Users/fujio.turner/Downloads/abc/groundhog/Cb_Logs/without_collections/ActivePeer/converted/",
+    "file-parse-type": "info",   
+    "cb-cluster-host": "127.0.0.1",
+    "cb-bucket-name": "cbl-log-reader",
+    "cb-bucket-user": "Administrator",
+    "cb-bucket-user-password": "password",
+    "cb-expire": 0,
+    "debug": false
 }
