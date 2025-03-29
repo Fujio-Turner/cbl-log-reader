@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Couchbase Lite Log Reader</title>
+    <!-- jQuery -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <!-- Flatpickr -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <!-- Moment.js and Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.0/dist/chartjs-adapter-moment.min.js"></script>
+    <!-- External CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <h2>Couchbase Lite Log Reader</h2>
+    <div class="container">
+        <div class="sidebar">
+            <input type="text" id="search-input" placeholder="Search raw logs...">
+            <h3>Filters</h3>
+            <div class="filter-group">
+                <label><input type="radio" name="type-mode" value="general" checked> General Type</label>
+                <label><input type="radio" name="type-mode" value="specific"> Specific Type</label>
+            </div>
+            <div id="type-filters">
+                <select multiple id="type-select"></select>
+            </div>
+            <div class="grouping-group">
+                <label><input type="radio" name="grouping-mode" value="all"> All</label>
+                <label><input type="radio" name="grouping-mode" value="by-second" checked> By Second</label>
+                <label><input type="radio" name="grouping-mode" value="by-minute"> By Minute</label>
+            </div>
+            <input type="text" id="start-date" placeholder="Start Date (YYYY-MM-DD HH:mm:ss)">
+            <input type="text" id="end-date" placeholder="End Date (YYYY-MM-DD HH:mm:ss)">
+            <button id="apply-filters">Apply Filters</button>
+        </div>
+        <div class="main">
+            <div class="chart-controls">
+                <label><input type="radio" name="scale-mode" value="linear" checked> Linear</label>
+                <label><input type="radio" name="scale-mode" value="logarithmic"> Logarithmic</label>
+            </div>
+            <div class="line-chart-container">
+                <canvas id="lineChart"></canvas>
+            </div>
+            <h3>Type Distribution</h3>
+            <div class="pie-chart-container">
+                <canvas id="pieChart"></canvas>
+            </div>
+            <h3>Raw Data: <span id="row-count"></span></h3>
+            <div class="table-container">
+                <table id="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Type</th>
+                            <th>Error</th>
+                            <th>Raw Log</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- External JavaScript -->
+    <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+</body>
+</html>

@@ -6,5 +6,5 @@
     "cb-bucket-user": "Administrator",
     "cb-bucket-user-password": "password",
     "cb-expire": 0,
-    "debug": false
+    "debug": true
 }
