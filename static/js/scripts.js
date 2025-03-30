@@ -20,6 +20,7 @@ $(document).ready(function() {
         secondIncrement: 1
     });
 
+
     // Fetch types for filters first
     $.get('/get_types', function(types) {
         let select = $('#type-select');
@@ -69,6 +70,9 @@ $(document).ready(function() {
         });
     });
 
+});
+
+
     // Function to fetch data from the server
     function fetchData() {
         let selectedTypes = $('#type-select').val() || [];
@@ -97,7 +101,6 @@ $(document).ready(function() {
             contentType: 'application/json',
             data: JSON.stringify(filters),
             success: function(chartData) {
-                console.log("Fetched line chart data:", chartData);
                 lineChartData = chartData;
                 updateLineChart(chartData, errorFilter);
             },
@@ -117,7 +120,6 @@ $(document).ready(function() {
                 search_term: searchTerm // Include the search term in the pie chart request
             }),
             success: function(pieData) {
-                console.log("Fetched pie chart data:", pieData);
                 pieChartData = pieData;
                 updatePieChart(pieData);
             },
@@ -133,18 +135,86 @@ $(document).ready(function() {
             contentType: 'application/json',
             data: JSON.stringify(filters),
             success: function(rawData) {
-                console.log("Fetched raw data:", rawData);
                 updateTable(rawData, searchTerm);
             },
             error: function() {
                 alert('Error fetching raw data');
             }
-    });
+         });
 
 
 
+        // Fetch log_report Doc
+        $.ajax({
+            url: '/get_log_report',
+            type: 'GET',
+            dataType: 'json',
+            success: function(logReportData) {
+                updateReplicationHistory(logReportData);
+            },
+            error: function() {
+                alert('Error fetching raw data');
+            }
+        });
 
 
+    }
+
+    function updateReplicationHistory(logReportData) {
+        // Target the table body
+        let tableBody = document.querySelector('#replication-report-table tbody');
+        if (!tableBody) {
+            console.error('Table body not found!');
+            return;
+        }
+        tableBody.innerHTML = ''; // Clear existing rows
+      
+        // Ensure replicationStats exists and is an array
+        const replicationStats = logReportData?.["replicationStats"] || [];
+      
+        // Sort by startTime (optional, remove if not needed)
+        const sortedStats = [...replicationStats].sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+      
+        var totalDocsProcess = 0;
+        var totalDocsReject = 0;
+        var totalEndpoint = 0;  // This will count valid endpoints
+      
+        sortedStats.forEach((entry, index) => {
+            // Format documentsProcessedCount and localWriteRejectionCount
+            const docCount = entry.documentsProcessedCount || 0;
+            const rejectCount = entry.localWriteRejectionCount || 0;
+            const docCountHtml = docCount > 0 ? `<strong style="color: green;">${docCount}</strong>` : docCount;
+            const rejectCountHtml = rejectCount > 0 ? `<strong style="color: red;">${rejectCount}</strong>` : rejectCount;
+            
+            // Check if endpoint exists first, then apply formatting
+            const endpoint = entry.endpoint ? `<strong style="color: green;">${entry.endpoint}</strong>` : '';
+            
+            // Increment counters
+            totalDocsProcess += docCount;
+            totalDocsReject += rejectCount;
+            // Increment totalEndpoint only if endpoint exists and is not empty
+            totalEndpoint += (entry.endpoint && entry.endpoint.trim() !== '') ? 1 : 0;
+    
+            var datepicker = entry.startTime.replace('T', ' ').slice(0, 19);
+            tableBody.insertAdjacentHTML('beforeend', `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td><span onclick="clickStartDate('${datepicker}')">${entry.startTime?.split("T")[1] || ''}</span></td>
+                    <td>${entry.replicationProcessId || ''}</td>
+                    <td>${docCountHtml}</td>
+                    <td>${rejectCountHtml}</td>
+                    <td>${endpoint}</td>
+                </tr>
+            `);
+        });
+        
+        $("#docProcessHead").html(totalDocsProcess);
+        $("#syncWriteRejectHead").html(totalDocsReject);
+        $("#endpointHead").html(totalEndpoint);
+    }
+
+    function clickStartDate(timestamp) {
+        $('#start-date').val(timestamp);
     }
 
     // Function to update the line chart
@@ -232,7 +302,7 @@ $(document).ready(function() {
                         
                  },
                 options: {
-                    tension: 0.3, // This makes the line smooth and curvy
+                    tension: 0.1, // This makes the line smooth and curvy
                     fill: false, // Optional: prevents filling under the line
                     responsive: true, // Make the chart responsive
                     maintainAspectRatio: false, // Allow the chart to stretch to fit the container
@@ -285,7 +355,6 @@ $(document).ready(function() {
     }
 
     
-
     // Function to update the pie chart
     function updatePieChart(data) {
         if (!data) {
@@ -328,7 +397,11 @@ $(document).ready(function() {
                     legend: {
                         position: 'right'
                     }
-                }
+                },
+                title: {
+                    display: true,
+                    text: 'Type Distribution'
+                  }
             }
         });
     }
@@ -386,19 +459,23 @@ $(document).ready(function() {
         let tableBody = document.querySelector('#data-table tbody');
         tableBody.innerHTML = ''; // Clear existing rows (resets the table)
       
-        data.forEach((row, index) => {
-          let errorValue = row.error ? 'True' : '';
-          let errorClass = row.error ? 'error-true' : '';
-      
-          tableBody.innerHTML += `
+        // Sort data by dt field (ascending chronological order)
+        const sortedData = [...data].sort((a, b) => new Date(a.dt) - new Date(b.dt));
+
+        sortedData.forEach((row, index) => {
+            let errorValue = row.error ? 'True' : '';
+            let errorClass = row.error ? 'error-true' : '';
+
+            tableBody.insertAdjacentHTML('beforeend', `
             <tr>
-              <td>${index + 1}</td>
-              <td>${row.type || ''}</td>
-              <td class="${errorClass}">${errorValue}</td>
-              <td>${row.rawLog || ''}</td>
+                <td>${index + 1}</td>
+                <td>${row.type || ''}</td>
+                <td class="${errorClass}">${errorValue}</td>
+                <td>${row.rawLog || ''}</td>
             </tr>
-          `;
+            `);
         });
+
       
         // Update the row count
         document.getElementById('row-count').textContent = `(${data.length} rows)`;
@@ -406,10 +483,10 @@ $(document).ready(function() {
 
     // Apply filters on button click, radio change, date change, or search input change
     $('#apply-filters').click(fetchData);
-    $('input[name="type-mode"]').change(fetchData);
-    $('input[name="grouping-mode"]').change(fetchData);
-    $("#start-date, #end-date").on("change", fetchData);
-    $("#search-input").on("input", fetchData);
+   // $('input[name="type-mode"]').change(fetchData);
+    //$('input[name="grouping-mode"]').change(fetchData);
+    //$("#start-date, #end-date").on("change", fetchData);
+    //$("#search-input").on("input", fetchData);
 
     // Update chart scale without re-fetching data
     $('input[name="scale-mode"]').change(function() {
@@ -421,4 +498,3 @@ $(document).ready(function() {
 
     
 
-});

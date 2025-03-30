@@ -35,6 +35,9 @@
             <input type="text" id="start-date" placeholder="Start Date (YYYY-MM-DD HH:mm:ss)">
             <input type="text" id="end-date" placeholder="End Date (YYYY-MM-DD HH:mm:ss)">
             <button id="apply-filters">Apply Filters</button>
+            <div>
+                ---
+            </div>
         </div>
         <div class="main">
             <div class="chart-controls">
@@ -44,16 +47,36 @@
             <div class="line-chart-container">
                 <canvas id="lineChart"></canvas>
             </div>
-            <h3>Type Distribution</h3>
-            <div class="pie-chart-container">
-                <canvas id="pieChart"></canvas>
+
+            <div class="container-middle-right">
+                <div class="left-section">
+                    <h4>Sync Report</h4>
+                    <table id="replication-report-table">
+                        <thead>
+                            <tr>
+                            <th>#</th>
+                            <th>Sync Process Start</th>
+                            <th>Procces Id</th>
+                            <th>Docs Proccessed (<span id="docProcessHead">0</span>)</th>
+                            <th>Sync Write Reject (<span id="syncWriteRejectHead">0</span>)</th>
+                            <th>Endpoints/URLs (<span id="endpointHead">0</span>)</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>              
+                    </table>  
+                </div>
+
+                <div class="pie-chart-container">
+                    <canvas id="pieChart"></canvas>
+                </div>
+
             </div>
-            <h3>Raw Data: <span id="row-count"></span></h3>
+            <h3>Raw Data: <span id="row-count"></span></h3> 
             <div class="table-container">
                 <table id="data-table">
                     <thead>
                         <tr>
-                            <th>#</th>
+                            <th>#</th>                            
                             <th>Type</th>
                             <th>Error</th>
                             <th>Raw Log</th>

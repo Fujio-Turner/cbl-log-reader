@@ -18,6 +18,12 @@ h2 {
     overflow: hidden;
 }
 
+.container-middle-right {
+    display: flex;
+    overflow: hidden;
+    height: 455px;
+}
+
 .sidebar {
     width: 250px;
     padding: 10px;
@@ -45,18 +51,19 @@ h2 {
 }
 
 .pie-chart-container {
-    width: 100%;
     max-width: 400px;
     margin: 0 auto;
+    width: 50%;
+    height: 450px;
+    padding: 10px; /* Optional: adds some spacing */
 }
 
 #pieChart {
     width: 100% !important;
-    height: 300px !important;
 }
 
 .table-container {
-    margin-top: 20px;
+    margin-top: 10px;
     overflow-x: auto;
 }
 
@@ -125,6 +132,17 @@ h2 {
     background-color: #f0f0f0;
 }
 
+#data-table thead th {
+    text-align: center;
+}
+
+#data-table tr:nth-child(even) {
+    background-color: #dcdcdc; /* Light gray for even rows */
+}
+
+#data-table tr:nth-child(odd) {
+    background-color: #ffffff; /* White for odd rows */
+}
 /* Style for error = true */
 .error-true {
     font-weight: bold;
@@ -167,3 +185,35 @@ h2 {
     font-weight: bold;
     color: red;
   }
+
+
+  #replication-report-table {
+    max-height: 400px; /* Adjust this value to your desired max height */
+    overflow-y: auto;  /* Enables vertical scrolling when content overflows */
+    display: block;    /* Ensures the table respects max-height */
+    width: 100%;       /* Optional: Keeps table full-width */
+    /* border: 1px solid #ccc; /* Optional: Adds a border for visibility */
+    text-align: center;
+  }
+  
+  /* Optional: Style the table for better readability */
+  #replication-report-table tbody {
+    width: 100%;
+  }
+  
+  #replication-report-table td {
+    padding: 8px; /* Optional: Adds some padding for readability */
+  }
+
+#replication-report-table tr:nth-child(even) {
+    background-color: #dcdcdc; /* Light gray for even rows */
+}
+
+#replication-report-table tr:nth-child(odd) {
+    background-color: #ffffff; /* White for odd rows */
+}
+
+  .left-section {
+    width: 50%;
+    padding: 10px; /* Optional: adds some spacing */
+}

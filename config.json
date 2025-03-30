@@ -1,10 +1,11 @@
 {
-    "file-to-parse": "/path/to/file/to/parse",
+    "file-to-parse": "/path/to/file",
     "file-parse-type": "info",   
     "cb-cluster-host": "127.0.0.1",
     "cb-bucket-name": "cbl-log-reader",
     "cb-bucket-user": "Administrator",
     "cb-bucket-user-password": "password",
+    "auto-start-dashboard":true,
     "cb-expire": 0,
-    "debug": true
-}
+    "debug": false
+}  

@@ -1,4 +1,6 @@
 import sys
+import subprocess
+from pathlib import Path
 import json
 import datetime
 import time
@@ -27,6 +29,7 @@ class LogReader():
     log_file_name = "cbl-log-big.txt"
     file_parse_type = "info|error|debug|verbose|warning"
     cblName = []  # New instance variable to store CBL info
+    autoStartDashboard = False 
 
     def __init__(self, config_file):
         self.readConfigFile(config_file)
@@ -43,6 +46,7 @@ class LogReader():
             self.cbTtl = config['cb-expire']
             self.file_to_parse = config['file-to-parse']
             self.file_parse_type = config.get('file-parse-type', "info|error|debug|verbose|warning")
+            self.autoStartDashboard = config.get('auto-start-dashboard', False)
 
     def makeCB(self):
         try:
@@ -135,7 +139,10 @@ class LogReader():
     def sync_commit_stats_get(self, log_line):
         match = re.search(r'Inserted (\d+) revs in ([\d.]+)ms \(([\d.]+)/sec\)', log_line)
         if match and 'commit' in log_line:
-            return [int(match.group(1)), float(match.group(2)), float(match.group(3))]
+            # Extract process ID
+            pid_match = re.search(r'Sync\s*\{(\d+)\}', log_line) if '|' in log_line else re.search(r'\[Sync\]:\s*\{(\d+)\}', log_line)
+            pid = int(pid_match.group(1)) if pid_match else None
+            return [int(match.group(1)), float(match.group(2)), float(match.group(3)), pid]
         return None
         
     def replication_status_stats(self, log_line):
@@ -307,55 +314,175 @@ class LogReader():
             newData["schedulerId"] = scheduler_match.group(1)
             newData["threadCount"] = int(scheduler_match.group(2))
 
+
+    def extract_endpoint(self,log_line):
+        """
+        Extracts endpoint information from a log line.
+        Returns a dictionary with the endpoint type and value, or None if no endpoint is found.
+        """
+        # Patterns for different endpoint types
+        url_pattern = r"endpoint:\s*(wss://[^\s}]+)"  # For wss:// URLs
+        msg_pattern = r"endpoint:\s*(x-msg-endpt:///[^\s}]+)"  # For x-msg-endpt://
+        url_endpoint_pattern = r"URLEndpoint\{url=(wss://[^\s}]+)"  # For URLEndpoint{url=...}
+        msg_endpoint_pattern = r"MessageEndpoint\{([^}]+)}"  # For MessageEndpoint{...}
+
+        # Try matching each pattern
+        url_match = re.search(url_pattern, log_line)
+        if url_match:
+            return {
+                "type": "url",
+                "value": url_match.group(1)
+            }
+
+        msg_match = re.search(msg_pattern, log_line)
+        if msg_match:
+            return {
+                "type": "message",
+                "value": msg_match.group(1)
+            }
+
+        url_endpoint_match = re.search(url_endpoint_pattern, log_line)
+        if url_endpoint_match:
+            return {
+                "type": "url",
+                "value": url_endpoint_match.group(1)
+            }
+
+        msg_endpoint_match = re.search(msg_endpoint_pattern, log_line)
+        if msg_endpoint_match:
+            return {
+                "type": "message",
+                "value": msg_endpoint_match.group(1)
+            }
+
+        # Return None if no endpoint is found
+        return None
+    
+    def extract_endpoint_and_pid(self, log_line):
+        import re
+        pid_hex_pattern = r"@0x[0-9a-fA-F]+"
+        pid_brace_pattern = r"\{([^|]+)\|"
+        url_pattern = r"endpoint:\s*(wss?://[^\s}]+)"  # For ws:// and wss://
+        msg_pattern = r"endpoint:\s*(x-msg-(?:endpt|conn)://([^\s}]+))"  # For x-msg-endpt:// and x-msg-conn://
+
+        result = {}
+        # Check for process ID
+        pid_brace_match = re.search(pid_brace_pattern, log_line)
+        if pid_brace_match:
+            result["process_id"] = pid_brace_match.group(1)
+        else:
+            pid_hex_match = re.search(pid_hex_pattern, log_line)
+            if pid_hex_match:
+                result["process_id"] = pid_hex_match.group(0)
+        
+        # Check for URL (ws:// or wss://)
+        url_match = re.search(url_pattern, log_line)
+        if url_match:
+            result["type"] = "url"
+            result["value"] = url_match.group(1)  # Full URL
+        else:
+            # Check for message endpoint (x-msg-endpt:// or x-msg-conn://)
+            msg_match = re.search(msg_pattern, log_line)
+            if msg_match:
+                result["type"] = "message"
+                result["value"] = msg_match.group(2)  # Path after the protocol
+        
+        return result if result else None
+
+
     def process_sync(self, line, is_full_date, newData):
+        if "processId" not in newData:
+            newData["processId"] = []
+        if "collection" not in newData:  # Added for consistency
+            newData["collection"] = []
+        if "correlationId" not in newData:  # Added for consistency
+            newData["correlationId"] = []
+
+        ##### Extract endpoint and PID information
+        info = self.extract_endpoint_and_pid(line)
+        if info:
+            if "type" in info and "value" in info:
+                newData["endpoint"] = {"type": info["type"], "value": info["value"]}
+            if "process_id" in info and info["process_id"] not in newData["processId"]:
+                newData["processId"].append(info["process_id"])
+
         ###### Sync Start ######
         if 'Starting Replicator' in line and 'config:' in line:
             newData["type"] = "Sync:Start"
             newData["replicationConfig"] = self.getSyncConfig(line)
             repl_id_match = re.search(r'Sync\s*\{(\d+)(?:\|)?', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)(?:\|)?', line)
             if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(1))
-            # ... (rest of Sync:Start logic remains unchanged)
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
 
         ###### State Changes ######
         elif '[JAVA] State changed' in line:
             newData["type"] = "Sync:StateChange"
-            # ... (rest of StateChange logic remains unchanged)
+            repl_id_match = re.search(r'@0x[0-9a-fA-F]+', line)
+            if repl_id_match:
+                proc_id = repl_id_match.group(0)
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
 
         ###### Status Changes ######
         elif '[JAVA] status changed' in line:
             newData["type"] = "Sync:Status"
-            # ... (rest of Status logic remains unchanged)
+            repl_id_match = re.search(r'@0x[0-9a-fA-F]+', line)
+            if repl_id_match:
+                proc_id = repl_id_match.group(0)
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
 
         ###### Rejection of Proposed Changes ######
         elif 'Rejecting proposed change' in line:
             newData["type"] = "Sync:Rejection"
-            # ... (rest of Rejection logic remains unchanged)
+            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            if repl_id_match:
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
 
         ###### Conflict Check ######
         elif ('Found' in line and 'conflicted docs' in line) or 'Scanning for pre-existing conflicts' in line:
             newData["type"] = "Sync:ConflictCheck"
-            # ... (rest of ConflictCheck logic remains unchanged)
+            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            if repl_id_match:
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
 
         ###### Checkpoint ######
         elif 'checkpoint' in line.lower():
             newData["type"] = "Sync:Checkpoint"
-            # ... (rest of Checkpoint logic remains unchanged)
+            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            if repl_id_match:
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
 
         ###### Revocation ######
         elif 'msg["revocations"]' in line:
             newData["type"] = "Sync:Revocation"
-            # ... (rest of Revocation logic remains unchanged)
+            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            if repl_id_match:
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
 
         ###### Starting Pull or Push ######
         elif 'Starting pull from remote seq' in line or 'Starting continuous push from local seq' in line:
             newData["type"] = "Sync:Starting"
             coll_match = re.search(r'Coll=(\d+)', line)
             if coll_match:
-                newData["collection"] = int(coll_match.group(1))
+                coll_id = int(coll_match.group(1))
+                if coll_id not in newData["collection"]:
+                    newData["collection"].append(coll_id)
             repl_id_match = re.search(r'(Puller|Pusher)#(\d+)', line)
             if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(2))
+                proc_id = int(repl_id_match.group(2))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
             seq_match = re.search(r"seq (?:'([^']*)'|#(\d+))", line)
             if seq_match:
                 newData["remoteSeq"] = seq_match.group(1) if seq_match.group(1) else seq_match.group(2)
@@ -365,18 +492,24 @@ class LogReader():
             newData["type"] = "Sync:Changes"
             coll_match = re.search(r'Coll=(\d+)', line)
             if coll_match:
-                newData["collection"] = int(coll_match.group(1))
-            repl_id_match = re.search(r'(RevFinder|ChangesFeed)#(\d+)', line) or re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+                coll_id = int(coll_match.group(1))
+                if coll_id not in newData["collection"]:
+                    newData["collection"].append(coll_id)
+            repl_id_match = (
+                re.search(r'(RevFinder|ChangesFeed)#(\d+)', line) or 
+                re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date 
+                else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            )
             if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(2) if repl_id_match.lastindex == 2 else repl_id_match.group(1))
-            # Received changes
+                proc_id = int(repl_id_match.group(2) if repl_id_match.lastindex == 2 else repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
             changes_match = re.search(r'Received (\d+) changes', line)
             if changes_match:
                 newData["changesCount"] = int(changes_match.group(1))
             seq_match = re.search(r"seq '([^']+)'..'([^']+)'", line)
             if seq_match:
                 newData["remoteSeq"] = f"{seq_match.group(1)}..{seq_match.group(2)}"
-            # Responded to changes
             revs_match = re.search(r'request for (\d+) revs in ([\d.]+) sec', line)
             if revs_match:
                 newData["changesRevs"] = int(revs_match.group(1))
@@ -387,10 +520,18 @@ class LogReader():
             newData["type"] = "Sync:CaughtUp"
             coll_match = re.search(r'Coll=(\d+)', line)
             if coll_match:
-                newData["collection"] = int(coll_match.group(1))
-            repl_id_match = re.search(r'(RevFinder)?#?(\d+)', line) or re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+                coll_id = int(coll_match.group(1))
+                if coll_id not in newData["collection"]:
+                    newData["collection"].append(coll_id)
+            repl_id_match = (
+                re.search(r'(RevFinder)?#?(\d+)', line) or 
+                re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date 
+                else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            )
             if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(2) if repl_id_match.lastindex == 2 else repl_id_match.group(1))
+                proc_id = int(repl_id_match.group(2) if repl_id_match.lastindex == 2 else repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
             seq_match = re.search(r'lastSequence #(\d+)', line)
             if seq_match:
                 newData["lastSequence"] = int(seq_match.group(1))
@@ -398,20 +539,33 @@ class LogReader():
         ###### Replication Complete ######
         elif 'Replication complete!' in line:
             newData["type"] = "Sync:Complete"
-            # ... (rest of Complete logic remains unchanged)
+            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            if repl_id_match:
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
 
         ###### Connection Closed ######
         elif 'Connection closed with WebSocket/HTTP status' in line:
             newData["type"] = "Sync:Closed"
             coll_match = re.search(r'Coll=(\d+)', line)
             if coll_match:
-                newData["collection"] = int(coll_match.group(1))
-            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+                coll_id = int(coll_match.group(1))
+                if coll_id not in newData["collection"]:
+                    newData["collection"].append(coll_id)
+            repl_id_match = (
+                re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date 
+                else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            )
             if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(1))
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
             corr_id_match = re.search(r'CorrID=([a-f0-9]+)', line)
             if corr_id_match:
-                newData["correlationId"] = corr_id_match.group(1)
+                corr_id = corr_id_match.group(1)
+                if corr_id not in newData["correlationId"]:
+                    newData["correlationId"].append(corr_id)
             status_match = re.search(r'status (\d+)', line)
             if status_match:
                 newData["ConnectionStatus"] = int(status_match.group(1))
@@ -421,26 +575,44 @@ class LogReader():
             newData["type"] = "Sync:Connected"
             coll_match = re.search(r'Coll=(\d+)', line)
             if coll_match:
-                newData["collection"] = int(coll_match.group(1))
-            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+                coll_id = int(coll_match.group(1))
+                if coll_id not in newData["collection"]:
+                    newData["collection"].append(coll_id)
+            repl_id_match = (
+                re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date 
+                else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            )
             if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(1))
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
             corr_id_match = re.search(r'CorrID=([a-f0-9]+)', line)
             if corr_id_match:
-                newData["correlationId"] = corr_id_match.group(1)
+                corr_id = corr_id_match.group(1)
+                if corr_id not in newData["correlationId"]:
+                    newData["correlationId"].append(corr_id)
 
         ###### Stopped ######
         elif 'Told to stop!' in line:
             newData["type"] = "Sync:Stopped"
             coll_match = re.search(r'Coll=(\d+)', line)
             if coll_match:
-                newData["collection"] = int(coll_match.group(1))
-            repl_id_match = re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+                coll_id = int(coll_match.group(1))
+                if coll_id not in newData["collection"]:
+                    newData["collection"].append(coll_id)
+            repl_id_match = (
+                re.search(r'Sync\s*\{(\d+)\}', line) if is_full_date 
+                else re.search(r'\[Sync\]:\s*\{(\d+)\}', line)
+            )
             if repl_id_match:
-                newData["replicationId"] = int(repl_id_match.group(1))
+                proc_id = int(repl_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
             corr_id_match = re.search(r'CorrID=([a-f0-9]+)', line)
             if corr_id_match:
-                newData["correlationId"] = corr_id_match.group(1)
+                corr_id = corr_id_match.group(1)
+                if corr_id not in newData["correlationId"]:
+                    newData["correlationId"].append(corr_id)
 
         ###### Other Sync Lines ######
         else:
@@ -449,24 +621,27 @@ class LogReader():
             
             if single_id_match and "State:" in line:
                 newData["type"] = "Sync:State"
-                # ... (rest of Sync:State logic remains unchanged)
+                proc_id = int(single_id_match.group(1))
+                if proc_id not in newData["processId"]:
+                    newData["processId"].append(proc_id)
             elif repl_ids_match:
                 newData["type"] = "Sync:Other"
                 repl_ids_dict = {}
-                repl_ids_list = []
                 path = repl_ids_match.group(1)
                 path_ids = re.findall(r'(C4RemoteRepl|Repl|Pusher|Puller|RevFinder)#(\d+)', path)
                 for name, id_value in path_ids:
                     id_int = int(id_value)
                     repl_ids_dict[name] = id_int
-                    if id_int not in repl_ids_list:
-                        repl_ids_list.append(id_int)
-                newData["replicationIds"] = repl_ids_dict
-                newData["replicationIdsList"] = repl_ids_list
+                    if id_int not in newData["processId"]:
+                        newData["processId"].append(id_int)
+                if repl_ids_dict:
+                    newData["replicationIds"] = repl_ids_dict
 
             coll_match = re.search(r'\{Coll#(\d+)\}', line)
             if coll_match:
-                newData["collection"] = int(coll_match.group(1))
+                coll_id = int(coll_match.group(1))
+                if coll_id not in newData["collection"]:
+                    newData["collection"].append(coll_id)
 
             received_changes_match = re.search(r'Received\s+(\d+)\s+changes', line)
             if received_changes_match:
@@ -483,16 +658,19 @@ class LogReader():
             newData["type"] = "Sync:Status"
             newData["replicatorClassStatus"] = repClassStats
 
+        # Sync:Commit section
         sCs = self.sync_commit_stats_get(line)
         if sCs:
             newData["type"] = "Sync:Commit"
-            # ... (rest of Sync:Commit logic remains unchanged)
             newData["syncCommitStats"] = {
                 "numInserts": sCs[0],
                 "insertPerSec": sCs[2],
                 "insertTime_ms": sCs[1],
-                "avgPerInsert_ms": round(sCs[1] / sCs[0], 3)
+                "avgPerInsert_ms": round(sCs[1] / sCs[0], 3) if sCs[0] > 0 else 0
             }
+            # Extract and append process ID if present
+            if len(sCs) > 3 and sCs[3] is not None and sCs[3] not in newData["processId"]:
+                newData["processId"].append(sCs[3])
 
     def process_zip(self, line, is_full_date, newData):
         newData["type"] = "Zip:Copying"
@@ -746,16 +924,39 @@ class LogReader():
 
             # Query for replication stats with start time
             replication_query = """
-                SELECT 
-                    cbl.replicationId,
-                    COUNT(*) AS totalCount,
-                    SUM(CASE WHEN cbl.type = 'Sync:Rejection' THEN 1 ELSE 0 END) AS rejectionCount,
-                    SUM(COALESCE(cbl.syncCommitStats.numInserts, 0)) + SUM(COALESCE(cbl.replicatorStatus.docs, 0)) AS documentCount,
-                    MIN(cbl.dt) AS startTime
-                FROM `cbl-log-reader` AS cbl
-                WHERE cbl.dt IS NOT MISSING AND cbl.replicationId IS NOT NULL
-                GROUP BY cbl.replicationId
-            """
+                                WITH url AS (
+                                    SELECT DISTINCT TOSTRING(pids) AS pid2,
+                                        FIRST_VALUE(cbl.endpoint.`value`) OVER (
+                                            PARTITION BY pids
+                                            ORDER BY cbl.dt) AS endpoint
+                                    FROM `cbl-log-reader` AS cbl
+                                    UNNEST cbl.processId AS pids
+                                    WHERE cbl.dt IS NOT MISSING
+                                        AND cbl.processId IS NOT NULL
+                                        AND cbl.endpoint IS NOT MISSING
+                                        AND SPLIT(cbl.`type`, ':')[0] = 'Sync')
+                                        
+                                SELECT bigHug.replicationId ,
+                                    bigHug.rejectionCount,
+                                    bigHug.documentCount,
+                                    bigHug.startTime,
+                                    bigHug.totalCount,
+                                    url.`endpoint`
+                                FROM (
+                                    SELECT TOSTRING(pid1) AS replicationId,
+                                        COUNT(*) AS totalCount,
+                                        SUM(CASE WHEN cbl.type = 'Sync:Rejection' THEN 1 ELSE 0 END) AS rejectionCount,
+                                        SUM(COALESCE(cbl.syncCommitStats.numInserts, 0)) + SUM(COALESCE(cbl.replicatorStatus.docs, 0)) AS documentCount,
+                                        MIN(cbl.dt) AS startTime
+                                    FROM `cbl-log-reader` AS cbl
+                                    UNNEST cbl.processId AS pid1
+                                    WHERE cbl.dt IS NOT MISSING
+                                        AND cbl.processId IS NOT NULL
+                                        AND SPLIT(cbl.`type`, ':')[0] = 'Sync'
+                                    GROUP BY pid1 ) AS bigHug LEFT
+                                    JOIN url ON TOSTRING(bigHug.replicationId) = url.pid2
+                                ORDER BY bigHug.startTime
+                                """
             replication_result = self.cluster.query(replication_query, QueryOptions(timeout=timedelta(seconds=10)))
             replication_rows = list(replication_result)
             if self.debug:
@@ -768,10 +969,11 @@ class LogReader():
                     "totalLogEntries": row["totalCount"],
                     "localWriteRejectionCount": row["rejectionCount"],
                     "documentsProcessedCount": row["documentCount"],
-                    "startTime": row["startTime"]
+                    "startTime": row["startTime"],
+                    "endpoint":  row.get("endpoint", None) 
                 } for row in replication_rows
             ]
-            report["replicationStats"] = sorted(replication_stats, key=lambda x: x["startTime"])
+            report["replicationStats"] = replication_stats
 
             # Upsert the report document
             report_key = "log_report"
@@ -965,6 +1167,27 @@ class LogReader():
         print('Total Process Time(sec): ', elapsed)
         print('Log Lines Processed    : ', seq - 1)
 
+    def start_web_server(self):
+        """Start the web server if autoStartDashboard is true."""
+        if self.autoStartDashboard:
+            app_path = Path("app.py")
+            config_path = Path(sys.argv[1])  # Assumes config.json is passed as arg
+            if not app_path.exists():
+                print("Error: app.py not found in current directory.")
+                return
+            if not config_path.exists():
+                print(f"Error: Config file {config_path} not found.")
+                return
+            
+            print("Starting web server: python3 app.py config.json")
+            # Run the web server in a separate process
+            subprocess.Popen(["python3", str(app_path), str(config_path)], cwd=Path.cwd())
+            print("Web server started.")
+            print("To stop the web server, press Ctrl+C")
+
+
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         config_file = sys.argv[1]
@@ -975,3 +1198,4 @@ if __name__ == "__main__":
     log_reader = LogReader(config_file)
     log_reader.read_log()
     #log_reader.generate_report()
+    log_reader.start_web_server()
