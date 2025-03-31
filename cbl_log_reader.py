@@ -358,8 +358,24 @@ class LogReader():
         # Return None if no endpoint is found
         return None
     
+    def check_and_convert(self,value):
+        # Check if it's an integer
+        if isinstance(value, int):
+            if self.debug: print(f"{value} is an integer")
+            return value
+        # Check if it's a string
+        elif isinstance(value, str):
+            if self.debug: print(f"{value} is a string")
+            try:
+                # Try to convert string to integer
+                converted = int(value)
+                if self.debug: print(f"Converted {value} to integer: {converted}")
+                return converted
+            except ValueError:
+                if self.debug: print(f"Cannot convert {value} to integer")
+                return value  # Return original string if conversion fails
+    
     def extract_endpoint_and_pid(self, log_line):
-        import re
         pid_hex_pattern = r"@0x[0-9a-fA-F]+"
         pid_brace_pattern = r"\{([^|]+)\|"
         url_pattern = r"endpoint:\s*(wss?://[^\s}]+)"  # For ws:// and wss://
@@ -369,11 +385,11 @@ class LogReader():
         # Check for process ID
         pid_brace_match = re.search(pid_brace_pattern, log_line)
         if pid_brace_match:
-            result["process_id"] = pid_brace_match.group(1)
+            result["process_id"] = self.check_and_convert(pid_brace_match.group(1))
         else:
             pid_hex_match = re.search(pid_hex_pattern, log_line)
             if pid_hex_match:
-                result["process_id"] = pid_hex_match.group(0)
+                result["process_id"] = self.check_and_convert(pid_hex_match.group(0))
         
         # Check for URL (ws:// or wss://)
         url_match = re.search(url_pattern, log_line)
@@ -924,26 +940,9 @@ class LogReader():
 
             # Query for replication stats with start time
             replication_query = """
-                                WITH url AS (
-                                    SELECT DISTINCT TOSTRING(pids) AS pid2,
-                                        FIRST_VALUE(cbl.endpoint.`value`) OVER (
-                                            PARTITION BY pids
-                                            ORDER BY cbl.dt) AS endpoint
-                                    FROM `cbl-log-reader` AS cbl
-                                    UNNEST cbl.processId AS pids
-                                    WHERE cbl.dt IS NOT MISSING
-                                        AND cbl.processId IS NOT NULL
-                                        AND cbl.endpoint IS NOT MISSING
-                                        AND SPLIT(cbl.`type`, ':')[0] = 'Sync')
-                                        
-                                SELECT bigHug.replicationId ,
-                                    bigHug.rejectionCount,
-                                    bigHug.documentCount,
-                                    bigHug.startTime,
-                                    bigHug.totalCount,
-                                    url.`endpoint`
+                                SELECT bigHug.*
                                 FROM (
-                                    SELECT TOSTRING(pid1) AS replicationId,
+                                    SELECT pid1 AS replicationId,
                                         COUNT(*) AS totalCount,
                                         SUM(CASE WHEN cbl.type = 'Sync:Rejection' THEN 1 ELSE 0 END) AS rejectionCount,
                                         SUM(COALESCE(cbl.syncCommitStats.numInserts, 0)) + SUM(COALESCE(cbl.replicatorStatus.docs, 0)) AS documentCount,
@@ -953,18 +952,19 @@ class LogReader():
                                     WHERE cbl.dt IS NOT MISSING
                                         AND cbl.processId IS NOT NULL
                                         AND SPLIT(cbl.`type`, ':')[0] = 'Sync'
-                                    GROUP BY pid1 ) AS bigHug LEFT
-                                    JOIN url ON TOSTRING(bigHug.replicationId) = url.pid2
-                                ORDER BY bigHug.startTime
+                                    GROUP BY pid1 ) AS bigHug
+                                WHERE bigHug.documentCount > 0
+                                    OR bigHug.rejectionCount > 0
+                                ORDER BY startTime
                                 """
             replication_result = self.cluster.query(replication_query, QueryOptions(timeout=timedelta(seconds=10)))
             replication_rows = list(replication_result)
             if self.debug:
                 print(f"Replication query result: {replication_rows}")
             
+
             # Sort by startTime and build replicationStats
-            replication_stats = [
-                {
+            replication_stats = [{
                     "replicationProcessId": row["replicationId"],
                     "totalLogEntries": row["totalCount"],
                     "localWriteRejectionCount": row["rejectionCount"],
@@ -974,6 +974,37 @@ class LogReader():
                 } for row in replication_rows
             ]
             report["replicationStats"] = replication_stats
+
+            replication_start_query = """
+                            SELECT cbl.dt ,
+                                cbl.`endpoint`,
+                                cbl.processId,
+                                ARRAY_COUNT(cbl.replicationConfig) as collectionCount
+                            FROM `cbl-log-reader` AS cbl
+                            WHERE cbl.dt IS NOT MISSING
+                                AND cbl.processId IS NOT NULL
+                                AND cbl.`endpoint` IS NOT MISSING
+                                AND cbl.`type` = 'Sync:Start'
+                                ORDER by cbl.dt
+                                """
+
+            replication_starts_result = self.cluster.query(replication_start_query, QueryOptions(timeout=timedelta(seconds=10)))
+            replication_starts_rows = list(replication_starts_result)
+            if self.debug:
+                print(f"Replication starts query result: {replication_starts_rows}")
+
+            replication_starts = [{
+                    "collectionCount": row["collectionCount"],
+                    "processId": row["processId"],
+                    "startTime": row["dt"],
+                    "endpoint":  row.get("endpoint", None) 
+                    } for row in replication_starts_rows
+            ] 
+            report["replicationStarts"] = replication_starts
+
+
+
+
 
             # Upsert the report document
             report_key = "log_report"
@@ -1184,8 +1215,6 @@ class LogReader():
             subprocess.Popen(["python3", str(app_path), str(config_path)], cwd=Path.cwd())
             print("Web server started.")
             print("To stop the web server, press Ctrl+C")
-
-
 
 
 if __name__ == "__main__":

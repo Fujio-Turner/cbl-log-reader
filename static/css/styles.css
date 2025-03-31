@@ -113,7 +113,7 @@ h2 {
 .table-container {
     margin-top: 20px;
     overflow-x: auto;
-    max-height: 400px; /* Limit height for vertical scroll */
+    max-height: 600px; /* Limit height for vertical scroll */
     overflow-y: auto;  /* Enable vertical scrolling */
 }
 
@@ -187,33 +187,62 @@ h2 {
   }
 
 
-  #replication-report-table {
+.mid-table {
     max-height: 400px; /* Adjust this value to your desired max height */
     overflow-y: auto;  /* Enables vertical scrolling when content overflows */
     display: block;    /* Ensures the table respects max-height */
     width: 100%;       /* Optional: Keeps table full-width */
     /* border: 1px solid #ccc; /* Optional: Adds a border for visibility */
     text-align: center;
+    border-collapse: collapse;
   }
   
   /* Optional: Style the table for better readability */
-  #replication-report-table tbody {
+.mid-table tbody {
     width: 100%;
   }
   
-  #replication-report-table td {
+.mid-table td {
     padding: 8px; /* Optional: Adds some padding for readability */
   }
 
-#replication-report-table tr:nth-child(even) {
+.mid-table tr:nth-child(even) {
     background-color: #dcdcdc; /* Light gray for even rows */
 }
 
-#replication-report-table tr:nth-child(odd) {
+.mid-table tr:nth-child(odd) {
     background-color: #ffffff; /* White for odd rows */
 }
 
   .left-section {
     width: 50%;
     padding: 10px; /* Optional: adds some spacing */
+}
+
+
+.date-button {
+    background: none;           /* No background by default */
+    border: 1px solid transparent; /* Invisible border to enable smooth transition */
+    color: inherit;             /* Matches table text color */
+    font: inherit;              /* Matches table font */
+    padding: 2px 4px;           /* Small padding for a larger click area */
+    text-align: left;           /* Aligns with table cell text */
+    cursor: pointer;            /* Indicates clickability */
+    transition: border-color 0.2s, background-color 0.2s; /* Smooth transition */
+  }
+  
+  .date-button:hover,
+  .date-button:focus {
+    border-color: #ccc;         /* Thin, light grey border */
+    background-color: #f5f5f5;  /* Very light grey background (or use #fffde7 for light yellow) */
+    border-radius: 4px;         /* Rounded corners */
+  }
+  
+  .date-button:focus {
+    outline: none;              /* Optional: Customize focus styles if desired */
+  }
+
+
+  .hidden {
+    display: none;
 }

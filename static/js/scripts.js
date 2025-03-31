@@ -83,13 +83,15 @@ $(document).ready(function() {
         let groupingMode = $('input[name="grouping-mode"]:checked').val() || 'by-second';
         let errorFilter = selectedTypes.includes('Error');
         let typeFilters = errorFilter ? [] : selectedTypes.filter(t => t !== 'Error');
+        let limit = $('#limit-select').val();
     
         let filters = {
             use_specific_type: useSpecificType,
             grouping_mode: groupingMode,
             error_filter: errorFilter,
             types: typeFilters,
-            search_term: searchTerm
+            search_term: searchTerm,
+            limit: limit
         };
         if (startDate) filters.start_date = startDate;
         if (endDate) filters.end_date = endDate;
@@ -199,7 +201,7 @@ $(document).ready(function() {
             tableBody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td>${index + 1}</td>
-                    <td><span onclick="clickStartDate('${datepicker}')">${entry.startTime?.split("T")[1] || ''}</span></td>
+                    <td > <button class="date-button" onclick="clickStartDate('${datepicker}')">${entry.startTime?.split("T")[1] || ''}</button></td>
                     <td>${entry.replicationProcessId || ''}</td>
                     <td>${docCountHtml}</td>
                     <td>${rejectCountHtml}</td>
@@ -211,11 +213,64 @@ $(document).ready(function() {
         $("#docProcessHead").html(totalDocsProcess);
         $("#syncWriteRejectHead").html(totalDocsReject);
         $("#endpointHead").html(totalEndpoint);
-    }
+
+        // Replicator the table body
+        let table2Body = document.querySelector('#replicator-table tbody');
+        if (!table2Body) {
+            console.error('Table body not found!');
+            return;
+        }
+
+        table2Body.innerHTML = ""
+        const replicationStarts = logReportData?.["replicationStarts"] || [];
+        const sortedReplicator = [...replicationStarts].sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+        sortedReplicator.forEach((entry, index) => {
+
+            var datepicker2 = entry.startTime.replace('T', ' ').slice(0, 19);
+            // Check if endpoint exists first, then apply formatting
+
+            var more = ""
+            if (entry.endpoint.type === "url") {
+                more += " AND ws://"
+            }
+
+            if (entry.endpoint.type === "message") {
+                more += " AND x-msg-conn"
+            }
+
+            table2Body.insertAdjacentHTML('beforeend', `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td> <button class="date-button" onclick="clickStartDate('${datepicker2}')">${entry.startTime?.split("T")[1] || ''}</button></td>
+                    <td><button class="date-button" onclick="clickProcessId('${entry.processId[0] + more || ''}')">${entry.processId[0] || ''}</button></td>
+                    <td>${entry.endpoint.value || ''}</td>
+                    <td>${entry.collectionCount}</td>
+                </tr>
+            `);
+
+            
+        }
+
+    )}
 
     function clickStartDate(timestamp) {
         $('#start-date').val(timestamp);
     }
+
+function clickProcessId(processId,more="") {
+    var processIdFts = "processId:" + processId.toString() + more;  // Fixed toString() capitalization and concatenation
+    var searchInput = $('#search-input');
+    var currentValue = searchInput.val().trim();  // Get current value and remove extra whitespace
+    
+    if (currentValue) {
+        // If there's existing content, append with " AND "
+        searchInput.val(currentValue + " AND " + processIdFts);
+    } else {
+        // If empty, just set the new value
+        searchInput.val(processIdFts);
+    }
+}
 
     // Function to update the line chart
     function updateLineChart(data, errorFilter) {
@@ -455,32 +510,85 @@ $(document).ready(function() {
         return colorMap[group].shades[shadeIndex];
     }
 
-    function updateTable(data) {
+    function updateTable(data, searchTerm) {
         let tableBody = document.querySelector('#data-table tbody');
         tableBody.innerHTML = ''; // Clear existing rows (resets the table)
       
         // Sort data by dt field (ascending chronological order)
         const sortedData = [...data].sort((a, b) => new Date(a.dt) - new Date(b.dt));
-
-        sortedData.forEach((row, index) => {
-            let errorValue = row.error ? 'True' : '';
-            let errorClass = row.error ? 'error-true' : '';
-
-            tableBody.insertAdjacentHTML('beforeend', `
-            <tr>
-                <td>${index + 1}</td>
-                <td>${row.type || ''}</td>
-                <td class="${errorClass}">${errorValue}</td>
-                <td>${row.rawLog || ''}</td>
-            </tr>
-            `);
-        });
-
+    
+        if (!searchTerm || searchTerm.trim() === '') {
+            // No search term, display as is
+            sortedData.forEach((row, index) => {
+                let errorValue = row.error ? 'True' : '';
+                let errorClass = row.error ? 'error-true' : '';
+    
+                tableBody.insertAdjacentHTML('beforeend', `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td>${row.type || ''}</td>
+                    <td class="${errorClass}">${errorValue}</td>
+                    <td>${row.rawLog || ''}</td>
+                    <td>${row.processId || ''}</td>
+                </tr>
+                `);
+            });
+        } else {
+            // Split the search term by operators and clean up
+            const operators = /\s+(AND|OR|NOT)\s+/gi;
+            let terms = searchTerm.split(operators)
+                .filter(term => !['AND', 'OR', 'NOT'].includes(term.trim().toUpperCase()))
+                .map(term => term.trim())
+                .filter(term => term.length > 0);
+    
+            // Process terms to remove prefixes like +processId: or +processed:
+            const cleanedTerms = terms.map(term => {
+                // Remove +processId: or +processed: followed by value
+                return term.replace(/^\+?(processId):/i, '');
+            });
+    
+            // Create regex patterns for each cleaned term
+            const regexPatterns = cleanedTerms.map(term => {
+                // Remove boost (^n)
+                term = term.replace(/\^\d+$/, '');
+                
+                // Convert wildcard * to regex .*
+                let pattern = term.replace(/\*/g, '.*');
+                
+                // Escape special regex characters (except *)
+                pattern = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+                
+                return new RegExp(pattern, 'gi');
+            });
+    
+            sortedData.forEach((row, index) => {
+                let errorValue = row.error ? 'True' : '';
+                let errorClass = row.error ? 'error-true' : '';
+                let rawLogContent = row.rawLog || '';
+                
+                // Apply highlighting for each term
+                let highlightedRawLog = rawLogContent;
+                regexPatterns.forEach(regex => {
+                    highlightedRawLog = highlightedRawLog.replace(regex, match => 
+                        `<span style="background-color: yellow">${match}</span>`
+                    );
+                });
+    
+                tableBody.insertAdjacentHTML('beforeend', `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td>${row.type || ''}</td>
+                    <td class="${errorClass}">${errorValue}</td>
+                    <td>${highlightedRawLog}</td>
+                    <td>${row.processId || ''}</td>
+                </tr>
+                `);
+            });
+        }
       
         // Update the row count
         document.getElementById('row-count').textContent = `(${data.length} rows)`;
-      }
-
+    }
     // Apply filters on button click, radio change, date change, or search input change
     $('#apply-filters').click(fetchData);
    // $('input[name="type-mode"]').change(fetchData);
@@ -496,5 +604,57 @@ $(document).ready(function() {
     });
 
 
-    
 
+        const checkboxes = document.querySelectorAll('.filter-check');
+        
+        function filterRows() {
+            const table = document.getElementById('replication-report-table');
+            const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+            const checkedCols = Array.from(checkboxes)
+                .filter(cb => cb.checked)
+                .map(cb => parseInt(cb.getAttribute('data-col')));
+
+            Array.from(rows).forEach(row => {
+                const cells = row.getElementsByTagName('td');
+                let shouldHide = false;
+
+                // If no checkboxes are checked, show all rows
+                if (checkedCols.length === 0) {
+                    row.classList.remove('hidden');
+                    return;
+                }
+
+                checkedCols.forEach(colIdx => {
+                    const cellValue = cells[colIdx].textContent.trim();
+                    
+                    if (colIdx === 3 || colIdx === 4) { // Columns 4 and 5 (integer columns)
+                        if (cellValue === '') {
+                            shouldHide = true; // Empty cells should hide
+                        } else {
+                            const numValue = parseInt(cellValue);
+                            if (numValue === 0) {
+                                shouldHide = true; // 0 should hide
+                            } else if (numValue > 0) {
+                                shouldHide = false; // > 0 should show (but won't override other conditions)
+                            } else {
+                                shouldHide = true; // < 0 should hide
+                            }
+                        }
+                    }
+                });
+
+                if (shouldHide) {
+                    row.classList.add('hidden');
+                } else {
+                    row.classList.remove('hidden');
+                }
+            });
+        }
+
+        // Add event listeners to all checkboxes
+        checkboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', filterRows);
+        });
+
+        // Initial filter
+        filterRows();

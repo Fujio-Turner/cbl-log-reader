@@ -13,6 +13,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.0/dist/chartjs-adapter-moment.min.js"></script>
     <!-- External CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/AddTabs.css') }}">
 </head>
 <body>
     <h2>Couchbase Lite Log Reader</h2>
@@ -50,28 +51,60 @@
 
             <div class="container-middle-right">
                 <div class="left-section">
-                    <h4>Sync Report</h4>
-                    <table id="replication-report-table">
-                        <thead>
-                            <tr>
-                            <th>#</th>
-                            <th>Sync Process Start</th>
-                            <th>Procces Id</th>
-                            <th>Docs Proccessed (<span id="docProcessHead">0</span>)</th>
-                            <th>Sync Write Reject (<span id="syncWriteRejectHead">0</span>)</th>
-                            <th>Endpoints/URLs (<span id="endpointHead">0</span>)</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>              
-                    </table>  
+                    <div data-addui='tabs'>
+                        <div role='tabs'>
+                          <div>Replicator</div>
+                          <div>Document Process</div>
+                          <div>SQL++</div>
+                        </div>
+                        <div role='contents'>
+                            <div>
+                            <table class="mid-table" id="replicator-table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>Start</th>
+                                            <th>processId</th>
+                                            <th>Endpoint/URLs</th>
+                                            <th># of Collections</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                    </table>
+                            </div>
+                            <div>
+                                  <table class="mid-table" id="replication-report-table">
+                                        <thead>
+                                            <tr>
+                                            <th>#</th>
+                                            <th>Start</th>
+                                            <th>processId</th>
+                                            <th>Docs Proccessed (<span id="docProcessHead">0</span>) <input type="checkbox" class="filter-check" data-col="3" > </th>
+                                            <th>Sync Write Reject (<span id="syncWriteRejectHead">0</span>)<input type="checkbox" class="filter-check" data-col="4" > </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>              
+                                    </table>  
+                            </div>
+                            <div>
+                               Query HERE
+                            </div>
+                        </div>
+                      </div>
                 </div>
-
-                <div class="pie-chart-container">
-                    <canvas id="pieChart"></canvas>
+               <div class="pie-chart-container">
+                        <canvas id="pieChart"></canvas>
                 </div>
-
             </div>
-            <h3>Raw Data: <span id="row-count"></span></h3> 
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <h3 style="margin: 0;">Raw Data: <span id="row-count"></span></h3>
+                <select name="limit" id="limit-select" style="width: 120px; padding: 5px;">
+                    <option value="200">LIMIT 200</option>
+                    <option value="2000" selected>LIMIT 2000</option>
+                    <option value="20000">LIMIT 20000</option>
+                    <option value="0">None</option>
+                </select>
+            </div>
             <div class="table-container">
                 <table id="data-table">
                     <thead>
@@ -80,6 +113,7 @@
                             <th>Type</th>
                             <th>Error</th>
                             <th>Raw Log</th>
+                            <th>processId</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -90,5 +124,6 @@
 
     <!-- External JavaScript -->
     <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/AddTabs.js') }}"></script>
 </body>
 </html>

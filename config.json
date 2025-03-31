@@ -5,7 +5,7 @@
     "cb-bucket-name": "cbl-log-reader",
     "cb-bucket-user": "Administrator",
     "cb-bucket-user-password": "password",
-    "auto-start-dashboard":true,
+    "auto-start-dashboard":false,
     "cb-expire": 0,
     "debug": false
 }  
