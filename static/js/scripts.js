@@ -259,7 +259,7 @@ $(document).ready(function() {
     }
 
 function clickProcessId(processId,more="") {
-    var processIdFts = "processId:" + processId.toString() + more;  // Fixed toString() capitalization and concatenation
+    var processIdFts = "+processId:" + processId.toString() + more;  // Fixed toString() capitalization and concatenation
     var searchInput = $('#search-input');
     var currentValue = searchInput.val().trim();  // Get current value and remove extra whitespace
     

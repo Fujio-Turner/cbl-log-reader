@@ -16,6 +16,30 @@
        "dynamic": false,
        "enabled": true,
        "properties": {
+        "dt": {
+         "enabled": true,
+         "dynamic": false,
+         "fields": [
+          {
+           "index": true,
+           "name": "dt",
+           "store": true,
+           "type": "text"
+          }
+         ]
+        },
+        "processId": {
+         "enabled": true,
+         "dynamic": false,
+         "fields": [
+          {
+           "index": true,
+           "name": "pid",
+           "store": true,
+           "type": "number"
+          }
+         ]
+        },
         "rawLog": {
          "enabled": true,
          "dynamic": false,
@@ -23,6 +47,18 @@
           {
            "index": true,
            "name": "rawLog",
+           "type": "text"
+          }
+         ]
+        },
+        "type": {
+         "enabled": true,
+         "dynamic": false,
+         "fields": [
+          {
+           "index": true,
+           "name": "type",
+           "store": true,
            "type": "text"
           }
          ]
@@ -49,5 +85,5 @@
      "indexPartitions": 1,
      "numReplicas": 0
     },
-    "uuid": "420579451b260d7b"
+    "uuid": "1ac19ed76b142bf7"
    }

@@ -39,10 +39,13 @@ Additionally, it generates a summary report (`log_report`) to provide insights i
 2. **Create Indexes**:
    - Replace older indexes with these optimized ones:
      ```sql
-     CREATE INDEX idx_dt ON `cbl-log-reader` (`dt`);
-     CREATE INDEX idx_type_dt ON `cbl-log-reader` (`type`, `dt`);
-     CREATE INDEX idx_error_type_dt ON `cbl-log-reader` (`error`, `type`, `dt`);
-     CREATE INDEX idx_repl_dt_type ON `cbl-log-reader` (`replicationId`, `dt`, `type`);
+     CREATE INDEX `dt_type_v1` ON `cbl-log-reader` (`dt`,`type`);
+     CREATE INDEX `idx_chart_data_v1` ON `cbl-log-reader`(substr0(`dt`, 0, 19),`error`,`type`) WHERE (`dt` is not missing)
+     CREATE INDEX `error_type_dt_v1` ON `cbl-log-reader`(`error`,`type`,`dt`)
+     CREATE INDEX `idx_pie_data_v1` ON `cbl-log-reader`((split(`type`, ":")[0]),`dt`) WHERE (`type` is not missing)
+     CREATE INDEX `idx_raw_data_v1` ON `cbl-log-reader`(`dt`,`error`,`type`) WHERE (`dt` is not missing)
+     CREATE INDEX `long_time_v2` ON `cbl-log-reader`(replace(substr0(`dt`, 0, 19), "T", " "),(split(`type`, ":")[0]),`type`,`dt`)
+     CREATE INDEX `type_dt_v1` ON `cbl-log-reader`(`type`,`dt`)
      ```
    - These support the report queries efficiently.
 
