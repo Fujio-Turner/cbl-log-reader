@@ -272,142 +272,135 @@ function clickProcessId(processId,more="") {
     }
 }
 
-    // Function to update the line chart
-    function updateLineChart(data, errorFilter) {
-        if (!data) {
-            console.log("No data to display for line chart");
+function updateLineChart(data, errorFilter) {
+    if (!data) {
+        console.log("No data to display for line chart");
+        return;
+    }
+
+    console.log("Raw data received:", data);
+
+    // Group data by type
+    let datasets = {};
+    data.forEach(function(item) {
+        if (!item.second || !item.type || typeof item.count !== 'number') {
+            console.warn("Skipping invalid data point:", item);
             return;
         }
-
-        // Log the raw data to inspect its structure
-        console.log("Raw data received:", data);
-
-        // Group data by type
-        let datasets = {};
-        data.forEach(function(item) {
-            // Ensure the item has the expected fields
-            if (!item.second || !item.type || typeof item.count !== 'number') {
-                console.warn("Skipping invalid data point:", item);
-                return;
-            }
-            let type = item.type;
-            if (!datasets[type]) {
-                datasets[type] = [];
-            }
-            datasets[type].push({ x: item.second, y: item.count });
-        });
-
-        // Create chart datasets with consistent colors
-        let chartDatasets = [];
-        for (let type in datasets) {
-            datasets[type].sort((a, b) => moment(a.x).diff(moment(b.x)));
-            // Get all types in the same group for shade calculation
-            let group = type.split(':')[0];
-            let specificTypes = Object.keys(datasets).filter(t => t.startsWith(group));
-            let borderColor = getTypeColor(type, errorFilter, specificTypes);
-            chartDatasets.push({
-                label: type,
-                data: datasets[type],
-                borderColor: borderColor,
-                fill: false
-            });
+        let type = item.type;
+        if (!datasets[type]) {
+            datasets[type] = [];
         }
+        datasets[type].push({ x: item.second, y: item.count });
+    });
 
-        console.log("New chart datasets:", chartDatasets);
+    let chartDatasets = [];
+    for (let type in datasets) {
+        datasets[type].sort((a, b) => moment(a.x).diff(moment(b.x)));
+        let group = type.split(':')[0];
+        let specificTypes = Object.keys(datasets).filter(t => t.startsWith(group));
+        let borderColor = getTypeColor(type, errorFilter, specificTypes);
+        chartDatasets.push({
+            label: type,
+            data: datasets[type],
+            borderColor: borderColor,
+            fill: false
+        });
+    }
 
-        // Extract y-axis values for debugging
-        let yValues = chartDatasets.flatMap(dataset => dataset.data.map(point => point.y)).filter(y => typeof y === 'number');
-        console.log("Y-axis values from new data:", yValues);
+    console.log("New chart datasets:", chartDatasets);
 
-        let scaleType = $('input[name="scale-mode"]:checked').val();
-        console.log("Updating chart with scale type:", scaleType);
+    let yValues = chartDatasets.flatMap(dataset => dataset.data.map(point => point.y)).filter(y => typeof y === 'number');
+    console.log("Y-axis values from new data:", yValues);
 
-        if (lineChart) {
-            // Log the current chart state before update
-            console.log("Current chart datasets before update:", lineChart.data.datasets);
-            console.log("Current y-axis scale before update:", lineChart.scales['y']);
-            console.log("Current y-axis range before update:", {
-                min: lineChart.scales['y'].min,
-                max: lineChart.scales['y'].max
-            });
+    let scaleType = $('input[name="scale-mode"]:checked').val();
+    console.log("Updating chart with scale type:", scaleType);
 
-            // Update the chart with new data
-            lineChart.data.datasets = chartDatasets;
-            lineChart.options.scales.y.type = scaleType;
-            lineChart.options.scales.y.ticks.min = yValues.length ? Math.min(...yValues) : 0;
-            lineChart.options.scales.y.ticks.max = yValues.length ? Math.max(...yValues) : 1;
-            lineChart.options.scales.y.ticks.stepSize = yValues.length ? Math.ceil((Math.max(...yValues) - Math.min(...yValues)) / 10) : 1;
+    if (lineChart) {
+        lineChart.data.datasets = chartDatasets;
+        lineChart.options.scales.y.type = scaleType;
+        lineChart.update('none');
+        console.log("Chart updated with new datasets:", lineChart.data.datasets);
+    } else {
+        let ctx = document.getElementById('lineChart').getContext('2d');
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-            // Force a full redraw
-            lineChart.update('none');
-            console.log("Chart updated with new datasets:", lineChart.data.datasets);
-        } else {
-            // Create a new chart instance
-            let ctx = document.getElementById('lineChart').getContext('2d');
-            console.log("Canvas dimensions before clear:", {
-                width: ctx.canvas.width,
-                height: ctx.canvas.height
-            });
-            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-            console.log("Canvas cleared");
-
-            lineChart = new Chart(ctx, {
-                type: 'line',
-                data: { datasets: chartDatasets
-                        
-                 },
-                options: {
-                    tension: 0.1, // This makes the line smooth and curvy
-                    fill: false, // Optional: prevents filling under the line
-                    responsive: true, // Make the chart responsive
-                    maintainAspectRatio: false, // Allow the chart to stretch to fit the container
-                    scales: {
-                        x: {
-                            type: 'time',
-                            title: {
-                                display: true,
-                                text: 'Time'
-                            }
-                        },
-                        y: {
-                            type: scaleType,
-                            beginAtZero: true,
-                            title: {
-                                display: true,
-                                text: 'Error Count'
-                            },
-                            ticks: {
-                                min: yValues.length ? Math.min(...yValues) : 0,
-                                max: yValues.length ? Math.max(...yValues) : 1,
-                                stepSize: yValues.length ? Math.ceil((Math.max(...yValues) - Math.min(...yValues)) / 10) : 1,
-                                callback: function(value) {
-                                    return value;
-                                }
-                            }
+        lineChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets: chartDatasets },
+            options: {
+                tension: 0.1,
+                fill: false,
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'time',
+                        title: {
+                            display: true,
+                            text: 'Time'
                         }
                     },
-                    plugins: {
-                        legend: {
+                    y: {
+                        type: scaleType,
+                        beginAtZero: true,
+                        title: {
                             display: true,
-                            position: 'top'
+                            text: 'Error Count'
+                        },
+                        ticks: {
+                            min: yValues.length ? Math.min(...yValues) : 0,
+                            max: yValues.length ? Math.max(...yValues) : 1,
+                            stepSize: yValues.length ? Math.ceil((Math.max(...yValues) - Math.min(...yValues)) / 10) : 1,
+                            callback: function(value) {
+                                return value;
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    zoom: {
+                        pan: {
+                            enabled: true, // Enable panning
+                            mode: 'xy', // Allow panning in both x and y directions
+                        },
+                        zoom: {
+                            wheel: {
+                                enabled: true, // Enable zooming with mouse wheel
+                            },
+                            pinch: {
+                                enabled: true, // Enable zooming with pinch gestures
+                            },
+                            drag: {
+                                enabled: true, // Enable rectangular drag-to-zoom
+                                backgroundColor: 'rgba(0, 0, 255, 0.3)', // Light blue fill for the zoom box
+                                borderColor: 'rgba(0, 0, 255, 1)', // Blue border for the zoom box
+                                borderWidth: 1
+                            },
+                            mode: 'xy', // Zoom in both x and y directions
                         }
                     }
                 }
-            });
-            console.log("New chart created with datasets:", lineChart.data.datasets);
-        }
-
-        // Log the chart state after update
-        console.log("Y-axis scale after update:", lineChart.scales['y']);
-        console.log("Y-axis range after update:", {
-            min: lineChart.scales['y'].min,
-            max: lineChart.scales['y'].max
+            }
         });
-        console.log("Canvas dimensions after chart update:", {
-            width: document.getElementById('lineChart').width,
-            height: document.getElementById('lineChart').height
-        });
+        console.log("New chart created with datasets:", lineChart.data.datasets);
     }
+
+    // Add reset button event listener (only once when chart is created)
+    if (!lineChart.resetListenerAdded) {
+        $('#zoom-reset').click(function() {
+            if (lineChart) {
+                lineChart.resetZoom(); // Reset the zoom and pan to the initial state
+                console.log("Zoom reset triggered");
+            }
+        });
+        lineChart.resetListenerAdded = true; // Flag to prevent multiple listeners
+    }
+}
 
     
     // Function to update the pie chart
@@ -544,7 +537,7 @@ function clickProcessId(processId,more="") {
             // Process terms to remove prefixes like +processId: or +processed:
             const cleanedTerms = terms.map(term => {
                 // Remove +processId: or +processed: followed by value
-                return term.replace(/^\+?(processId):/i, '');
+                return term.replace(/^\+?(processId|rawLog|type|dt):/i, '');
             });
     
             // Create regex patterns for each cleaned term

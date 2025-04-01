@@ -27,3 +27,4 @@ Pipfile.lock
 # IDE-specific (optional, add if you use these)
 .vscode/
 .idea/
+local_config.json

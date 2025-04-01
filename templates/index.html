@@ -44,6 +44,7 @@
             <div class="chart-controls">
                 <label><input type="radio" name="scale-mode" value="linear" checked> Linear</label>
                 <label><input type="radio" name="scale-mode" value="logarithmic"> Logarithmic</label>
+                <button id="zoom-reset">Reset Zoom</button>
             </div>
             <div class="line-chart-container">
                 <canvas id="lineChart"></canvas>
@@ -126,5 +127,6 @@
     <!-- External JavaScript -->
     <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
     <script src="{{ url_for('static', filename='js/AddTabs.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 </body>
 </html>

@@ -90,7 +90,8 @@ def get_date_range():
     query = """
         SELECT MIN(dt) AS min_dt, MAX(dt) AS max_dt
         FROM `cbl-log-reader`
-        WHERE dt IS NOT MISSING AND dt IS NOT NULL
+        WHERE dt IS NOT MISSING 
+        AND dt IS NOT MISSING
     """
     cache_key = hashlib.md5(query.encode('utf-8')).hexdigest()
     if DEBUG: print(f"Generated cache key: {cache_key}")
@@ -179,11 +180,10 @@ def get_chart_data():
     type_field = "type" if use_specific_type else "SPLIT(type, ':')[0]"
     if DEBUG: print(f"Type field determined: {type_field}")
 
-    where_clauses = ["dt IS NOT MISSING"]
+    where_clauses = ["dt IS NOT MISSING", "type IS NOT MISSING"]
     if start_date and end_date:
         where_clauses.append("REPLACE(SUBSTR(dt, 0, 19), 'T', ' ') >= $start_date AND REPLACE(SUBSTR(dt, 0, 19), 'T', ' ') <= $end_date")
-    where_clauses.extend(["type IS NOT NULL", "dt IS NOT NULL"])
-    
+
     query_params = {}
     if start_date and end_date:
         query_params = {'start_date': start_date, 'end_date': end_date}
@@ -272,7 +272,7 @@ def get_pie_data():
     end_date = filters.get('end_date')
     search_term = filters.get('search_term', '')
 
-    where_clauses = ["type IS NOT MISSING"]
+    where_clauses = ["dt IS NOT MISSING", "type IS NOT MISSING"]
     if start_date and end_date:
         where_clauses.append("REPLACE(SUBSTR(dt, 0, 19), 'T', ' ') >= $start_date AND REPLACE(SUBSTR(dt, 0, 19), 'T', ' ') <= $end_date")
     if search_term:
@@ -340,7 +340,7 @@ def get_raw_data():
 
     type_field = "type" if use_specific_type else "SPLIT(type, ':')[0]"
 
-    where_clauses = ["dt IS NOT MISSING", "type IS NOT NULL", "dt IS NOT NULL"]
+    where_clauses = ["dt IS NOT MISSING", "type IS NOT MISSING"]
     if start_date and end_date:
         where_clauses.append("REPLACE(SUBSTR(dt, 0, 19), 'T', ' ') >= $start_date AND REPLACE(SUBSTR(dt, 0, 19), 'T', ' ') <= $end_date")
     if types:
@@ -364,7 +364,7 @@ def get_raw_data():
     # Add LIMIT only if limit is greater than 0
     if limit > 0:
         query += f" LIMIT {limit}"
-        
+
     if DEBUG: print(f"Executing query for /get_raw_data: {query}")
 
     query_params = {}
