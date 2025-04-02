@@ -192,43 +192,101 @@ class LogReader():
             return {"rows": int(match.group(1)), "bytes": int(match.group(2)), "time_ms": float(match.group(3))}
         return False
         
+
+
+
     def getSyncConfig(self, line):
-        # Extract the config portion between {{{ and }}}
-        config_start = line.find('{{{') + 2
-        config_end = line.rfind('}}}')
-        if config_start == 1 or config_end == -1:
+        """
+        Extracts sync configuration details from a log line and returns a list of collection dictionaries.
+
+        Args:
+            line (str): The log line containing the configuration string.
+
+        Returns:
+            list: A list of dictionaries, each containing 'coll', 'name', 'push', 'pull', and optionally 'channels'.
+        """
+        if self.debug: print(f"Input log line: {line[:100]}... (truncated)")
+
+        # Find the start of the config section
+        config_start = line.find('config: ')
+        if config_start == -1:
+            if self.debug: print("Error: No 'config: ' found in the log line.")
             return []
+        config_start += len('config: ')
+        if self.debug: print(f"Position after 'config: ': {config_start}")
 
-        config_str = line[config_start:config_end]
+        # Find the opening triple braces '{{{'
+        brace_start = line.find('{{{', config_start)
+        if brace_start == -1:
+            if self.debug: print("Error: No '{{{' found after 'config: '.")
+            return []
+        #print(f"Position of '{{{': {brace_start}")
+
+        # Use brace counting to find the closing '}}}'
+        counter = 3  # Starting count for '{{{'
+        i = brace_start + 3  # Start AFTER '{{{'
+        if self.debug: print(f"Starting brace count at position {i}, counter = {counter}")
+        while i < len(line) and counter > 0:
+            if line[i] == '{':
+                counter += 1
+                if self.debug: print(f"Found '{{' at position {i}, counter = {counter}")
+            elif line[i] == '}':
+                counter -= 1
+                if self.debug: print(f"Found '}}' at position {i}, counter = {counter}")
+            i += 1
+
+        if counter != 0:
+            if self.debug: print("Error: Unmatched braces; cannot find closing '}}}'.")
+            return []
+        #print(f"Position after '}}}': {i}")
+
+        # Extract the config string between '{{{' and '}}}'
+        config_str = line[brace_start:i]  # Include full {{{...}}}
+        if self.debug: print(f"Extracted config_str (full): {config_str[:100]}... (truncated)")
+        config_str = config_str[3:-3]  # Strip {{{ and }}}
+        if self.debug: print(f"Extracted config_str (stripped): {config_str[:100]}... (truncated)")
+
+        # Parse collections from config_str
         collections = []
+        # Updated pattern to match 'Coll#<number>}' instead of '{Coll#<number>}'
+        coll_pattern = r'Coll#(\d+)\}\s*"([^"]+)":\s*\{((?:[^}{]+|\{[^}]*\})*)\}'
+        matches = list(re.finditer(coll_pattern, config_str))
+        if self.debug: print(f"Number of collection matches found: {len(matches)}")
 
-        # Match each collection block: {Coll#N} "name": {...}
-        coll_pattern = r'\{Coll#(\d+)\}\s*"([^"]+)":\s*\{([^}]+)\}'
-        for coll_match in re.finditer(coll_pattern, config_str):
-            coll_id = int(coll_match.group(1))
-            coll_name = coll_match.group(2)
-            coll_options = coll_match.group(3)
+        for match in matches:
+            coll_id = int(match.group(1))
+            coll_name = match.group(2)
+            coll_options = match.group(3)
+            if self.debug: print(f"\nProcessing Collection ID: {coll_id}, Name: '{coll_name}', Options: {coll_options[:50]}... (truncated)")
 
             coll_dict = {"coll": coll_id, "name": coll_name}
-            
-            # Parse Push/Pull
+
             push_match = re.search(r'"Push":\s*(\w+)', coll_options)
-            pull_match = re.search(r'"Pull":\s*(\w+)', coll_options)
             if push_match:
                 coll_dict["push"] = push_match.group(1)
+                if self.debug: print(f"  Push setting: {coll_dict['push']}")
+            else:
+                if self.debug: print("  No Push setting found.")
+
+            pull_match = re.search(r'"Pull":\s*(\w+)', coll_options)
             if pull_match:
                 coll_dict["pull"] = pull_match.group(1)
+                if self.debug: print(f"  Pull setting: {coll_dict['pull']}")
+            else:
+                if self.debug: print("  No Pull setting found.")
 
-            # Parse channels within Options={channels:[...]}
             channels_match = re.search(r'channels:\s*\[([^\]]+)\]', coll_options)
             if channels_match:
                 channels_str = channels_match.group(1)
-                # Split channels, handling quoted and unquoted values
                 channels = [ch.strip().strip('"') for ch in re.split(r',\s*', channels_str) if ch.strip()]
                 coll_dict["channels"] = channels
+                if self.debug: print(f"  Channels (first 5): {channels[:5]}... (total: {len(channels)})")
+            else:
+                if self.debug: print("  No channels found.")
 
             collections.append(coll_dict)
 
+        if self.debug: print(f"\nFinal collections list: {collections}")
         return collections
 
 
@@ -854,7 +912,7 @@ class LogReader():
                 FROM `cbl-log-reader` AS cbl
                 WHERE cbl.dt IS NOT MISSING
             """
-            timestamp_result = self.cluster.query(timestamp_query, QueryOptions(timeout=timedelta(seconds=10)))
+            timestamp_result = self.cluster.query(timestamp_query, QueryOptions(timeout=timedelta(seconds=75)))
             for row in timestamp_result:
                 if self.debug:
                     print(f"Timestamp query result: {row}")
@@ -871,7 +929,7 @@ class LogReader():
                 GROUP BY cbl.`type`
                 ORDER BY cbl.`type`
             """
-            type_result = self.cluster.query(type_query, QueryOptions(timeout=timedelta(seconds=10)))
+            type_result = self.cluster.query(type_query, QueryOptions(timeout=timedelta(seconds=75)))
             type_rows = list(type_result)
             if self.debug:
                 print(f"Type query result: {type_rows}")
@@ -894,7 +952,7 @@ class LogReader():
             if self.debug:
                 print(f"Error query: {error_query}")
 
-            error_result = self.cluster.query(error_query, QueryOptions(timeout=timedelta(seconds=10)))
+            error_result = self.cluster.query(error_query, QueryOptions(timeout=timedelta(seconds=75)))
             error_rows = list(error_result)
             if self.debug:
                 print(f"Error query result: {error_rows}")

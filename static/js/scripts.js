@@ -20,6 +20,18 @@ $(document).ready(function() {
         secondIncrement: 1
     });
 
+        // Select All button click handler
+        $('#select-all').click(function(e) {
+            e.preventDefault();
+            $('#type-select option').prop('selected', true);
+        });
+    
+        // Unselect All button click handler
+        $('#unselect-all').click(function(e) {
+            e.preventDefault();
+            $('#type-select option').prop('selected', false);
+        });
+
 
     // Fetch types for filters first
     $.get('/get_types', function(types) {
@@ -232,7 +244,7 @@ $(document).ready(function() {
 
             var more = ""
             if (entry.endpoint.type === "url") {
-                more += " AND ws://"
+                more += " AND ws:// OR wss://"
             }
 
             if (entry.endpoint.type === "message") {
@@ -248,10 +260,7 @@ $(document).ready(function() {
                     <td>${entry.collectionCount}</td>
                 </tr>
             `);
-
-            
         }
-
     )}
 
     function clickStartDate(timestamp) {
@@ -260,16 +269,7 @@ $(document).ready(function() {
 
 function clickProcessId(processId,more="") {
     var processIdFts = "+processId:" + processId.toString() + more;  // Fixed toString() capitalization and concatenation
-    var searchInput = $('#search-input');
-    var currentValue = searchInput.val().trim();  // Get current value and remove extra whitespace
-    
-    if (currentValue) {
-        // If there's existing content, append with " AND "
-        searchInput.val(currentValue + " AND " + processIdFts);
-    } else {
-        // If empty, just set the new value
-        searchInput.val(processIdFts);
-    }
+    $('#search-input').val(processIdFts)
 }
 
 function updateLineChart(data, errorFilter) {
