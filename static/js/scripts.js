@@ -119,7 +119,7 @@ $(document).ready(function() {
             data: JSON.stringify(filters),
             success: function(chartData) {
                 lineChartData = chartData;
-                updateLineChart(chartData, errorFilter);
+                updateLineChart(chartData.data, errorFilter);
             },
             error: function() {
                 alert('Error fetching line chart data');

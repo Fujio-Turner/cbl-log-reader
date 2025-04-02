@@ -10,7 +10,7 @@ This project processes Couchbase Lite log files and inserts them into a local Co
 - `GROUP BY`
 - `ORDER BY`
 - `BETWEEN ... AND ...`
-- `SEARCH(rawLog, "*pull*")`
+- `SEARCH(cbl-log-reader, "*pull*")`
 - `MIN`, `MAX`, and more.
 
 Additionally, it generates a summary report (`log_report`) to provide insights into log activity, errors, and replication performance.
@@ -40,11 +40,8 @@ Additionally, it generates a summary report (`log_report`) to provide insights i
    - Replace older indexes with these optimized ones:
      ```sql
      CREATE INDEX `big_hug_v2` ON `cbl-log-reader`((all (`processId`)),`type`,`dt`,`processId`,ifmissingornull((`syncCommitStats`.`numInserts`), 0),ifmissingornull((`replicatorStatus`.`docs`), 0)) WHERE ((split(`type`, ":")[0]) = "Sync")
-     CREATE INDEX `dt_type_v1` ON `cbl-log-reader` (`dt`,`type`);
-     CREATE INDEX `idx_chart_data_v1` ON `cbl-log-reader`(substr0(`dt`, 0, 19),`error`,`type`) WHERE (`dt` is not missing)
      CREATE INDEX `error_type_dt_v1` ON `cbl-log-reader`(`error`,`type`,`dt`)
-     CREATE INDEX `idx_pie_data_v1` ON `cbl-log-reader`((split(`type`, ":")[0]),`dt`) WHERE (`type` is not missing)
-     CREATE INDEX `idx_raw_data_v1` ON `cbl-log-reader`(`dt`,`error`,`type`) WHERE (`dt` is not missing)
+     CREATE INDEX `dt_v1` ON `cbl-log-reader`(`dt`)
      CREATE INDEX `long_time_v2` ON `cbl-log-reader`(replace(substr0(`dt`, 0, 19), "T", " "),(split(`type`, ":")[0]),`type`,`dt`)
      CREATE INDEX `type_dt_v1` ON `cbl-log-reader`(`type`,`dt`)
      ```
@@ -56,8 +53,8 @@ Additionally, it generates a summary report (`log_report`) to provide insights i
 4. **Download This Repo**:
    - Clone or download to your preferred directory (e.g., `/home/downloads/cbl-log-reader/`).
 
-5. **Optional FTS Index**:
-   - For faster searches on `rawLog` (e.g., `SEARCH(rawLog, "*errors*")`), import `optional_fts_index.json` from this repo into Couchbase’s Full Text Search service. Useful for large datasets (millions of documents).
+5. **FTS Index(Mandatory)**:
+   - For faster searches on `rawLog` (e.g., `SEARCH(cbl-log-reader, "error")`), import `optional_fts_index.json` from this repo into Couchbase’s Full Text Search service. Useful for large datasets (millions of documents).
 
 ### Running
 

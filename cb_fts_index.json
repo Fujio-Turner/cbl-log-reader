@@ -16,6 +16,20 @@
        "dynamic": false,
        "enabled": true,
        "properties": {
+        "dt": {
+         "enabled": true,
+         "dynamic": false,
+         "fields": [
+          {
+           "docvalues": true,
+           "include_in_all": true,
+           "index": true,
+           "name": "dt",
+           "store": true,
+           "type": "datetime"
+          }
+         ]
+        },
         "dtEpoch": {
          "enabled": true,
          "dynamic": false,
@@ -39,6 +53,20 @@
            "include_in_all": true,
            "index": true,
            "name": "error",
+           "store": true,
+           "type": "boolean"
+          }
+         ]
+        },
+        "mainType": {
+         "enabled": true,
+         "dynamic": false,
+         "fields": [
+          {
+           "docvalues": true,
+           "include_in_all": true,
+           "index": true,
+           "name": "mainType",
            "store": true,
            "type": "text"
           }
@@ -104,5 +132,5 @@
      "indexPartitions": 1,
      "numReplicas": 0
     },
-    "uuid": "3b476e7719e0a28e"
+    "uuid": "2d6cbb667e600a00"
    }

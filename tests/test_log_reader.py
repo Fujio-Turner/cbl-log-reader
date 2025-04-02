@@ -5,6 +5,7 @@ import tempfile
 import shutil
 from unittest.mock import patch, MagicMock
 from cbl_log_reader import LogReader  # Adjust based on your file structure
+from datetime import datetime
 
 class TestLogReader(unittest.TestCase):
 
@@ -116,11 +117,14 @@ class TestLogReader(unittest.TestCase):
         log_line = "17:24:02.456955| [Sync]: {15790} State: busy, progress=99.9506%"
         with patch.object(LogReader, 'cbUpsert') as mock_upsert:
             reader.bigLineProcecess(log_line, 1)
+            # Dynamically generate expected timestamp with today's date
+            today = datetime.now().date()  # Get current date (e.g., 2025-04-02)
+            expected_dt = f"{today}T17:24:02.456955"  # Combine with log time
             expected_data = {
                 "logLine": 1,
-                "dt": "17:24:02.456955",
-                "fullDate": False,
-                "type": "Sync:State",  # Updated to match new type format
+                "dt": expected_dt,  # Dynamic date
+                "fullDate": True,
+                "type": "Sync:State",
                 "fileName": reader.log_file_name,
                 "replicationId": 15790,
                 "state": "busy",

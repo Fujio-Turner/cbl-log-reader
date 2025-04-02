@@ -80,8 +80,8 @@ class LogReader():
             pattern = r'\[([^\]]+)\]'
             match = re.search(pattern, line)
             return match.group(1) if match else None
-    
-    def extract_timestamp(self, log_line):
+    '''
+        def extract_timestamp(self, log_line):
         full_date_pattern = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}:\d{2})?)\|'
         full_date_match = re.search(full_date_pattern, log_line)
         if full_date_match:
@@ -115,18 +115,45 @@ class LogReader():
             return [iso_date, False, epoch]
         
         return [None, False, None]  # Return [dt, full_date_flag, epoch]
+    '''
+
+    def extract_timestamp(self, log_line):
+        full_date_pattern = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}:\d{2})?)\|'
+        full_date_match = re.search(full_date_pattern, log_line)
+        if full_date_match:
+            dt_str = full_date_match.group(1)
+            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            return [dt_str, True, dt.timestamp()]
+
+        time_only_pattern = r'^(\d{2}:\d{2}:\d{2}\.\d+)\|'
+        time_only_match = re.search(time_only_pattern, log_line)
+        if time_only_match:
+            time_str = time_only_match.group(1)  # e.g., "17:24:02.456955"
+            current_time = datetime.strptime(time_str, "%H:%M:%S.%f")
+            # Use yesterday as base date for epoch calculation only
+            base_date = datetime.now().date() - timedelta(days=1)
+            
+            if not hasattr(self, 'last_time'):
+                self.last_time = None
+            
+            if self.last_time and current_time < self.last_time:
+                base_date = datetime.now().date()  # Today if rollover
+            
+            self.last_time = current_time
+            
+            dt = datetime.combine(base_date, current_time.time())
+            epoch = dt.timestamp()
+            return [time_str, False, epoch]  # Return original time string, not ISO
+        
+        return [None, False, None]
     
     def find_error_in_line(self, line, is_full_date):
         if self.check_error_end_of_line(line):
             return False
-        if is_full_date:
-            if (re.search(r'(Sync|WS)\s*ERROR(?:\s|:|$)', line, re.IGNORECASE) or 
-                re.search(r' error', line, re.IGNORECASE)):
-                return True
-        else:
-            if (re.search(r'\[(Sync|WS)\]\s*ERROR(?:\s|:|$)', line, re.IGNORECASE) or 
-                re.search(r' error', line, re.IGNORECASE)):
-                return True
+        # Look for ERROR or ERR anywhere in the line
+        if re.search(r'(ERROR|ERR)(?:\s|:|$)', line, re.IGNORECASE) or \
+        re.search(r' (error|err) ', line, re.IGNORECASE):
+            return True
         return False
 
     def find_pattern_query_line_1(self, line, is_full_date):
@@ -192,8 +219,6 @@ class LogReader():
             return {"rows": int(match.group(1)), "bytes": int(match.group(2)), "time_ms": float(match.group(3))}
         return False
         
-
-
 
     def getSyncConfig(self, line):
         """
@@ -679,6 +704,7 @@ class LogReader():
                 newData["receivedChanges"] = int(received_changes_match.group(1))
 
         # These checks can override type if they match
+
         repActiveStats = self.replication_status_stats(line)
         if repActiveStats:
             newData["type"] = "Sync:Active"
@@ -903,6 +929,8 @@ class LogReader():
             "fakeDates": False,  # Default to False
             "cblInfo": self.cblName  # Add cblName info here
         }
+
+        print("Making Report - Doc ID: `log_report`")
 
         try:
             # Query for oldest and newest timestamps
@@ -1247,6 +1275,6 @@ if __name__ == "__main__":
         print("# python3 cbl_log_reader.py config.json")
         exit()
     log_reader = LogReader(config_file)
-    #log_reader.read_log()
-    log_reader.generate_report()
-    #log_reader.start_web_server()
+    log_reader.read_log()
+    #log_reader.generate_report()
+    log_reader.start_web_server()

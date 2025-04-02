@@ -1,6 +1,6 @@
 from flask import Flask, render_template, jsonify, request
 import traceback
-from couchbase.cluster import Cluster, ClusterOptions , QueryOptions
+from couchbase.cluster import Cluster, ClusterOptions, QueryOptions
 from couchbase.auth import PasswordAuthenticator
 from couchbase.exceptions import CouchbaseException, DocumentNotFoundException
 import json
@@ -9,9 +9,12 @@ import hashlib
 import re
 from datetime import datetime, timedelta
 
-print("Starting app.py from /Users/fujio.turner/Documents/demo/cbl-log-reader/cbl-log-reader/")
+# Global FTS index name
+FTS_INDEX_NAME = "cbl_rawLog_v3"
+web_port = 5000
 
-DEBUG = True
+print("Starting app.py ")
+
 app = Flask(__name__)
 
 # Load configuration
@@ -23,15 +26,13 @@ config_file = sys.argv[1]
 try:
     with open(config_file) as f:
         config = json.load(f)
+        DEBUG = config.get('debug', False)
 except FileNotFoundError:
     print(f"Error: Config file '{config_file}' not found.")
     exit(1)
 except json.JSONDecodeError:
     print(f"Error: '{config_file}' is not a valid JSON file.")
     exit(1)
-
-if config.get('debug') == True:
-    DEBUG = True
 
 required_keys = ['cb-cluster-host', 'cb-bucket-user', 'cb-bucket-user-password', 'cb-bucket-name']
 missing_keys = [key for key in required_keys if key not in config]
@@ -83,8 +84,6 @@ def build_fts_query(search_term, field_name):
     n1ql_escaped_term = escaped_term.replace("'", "''")
     return n1ql_escaped_term
 
-
-
 def build_fts_query_2(filters):
     use_specific_type = filters.get('use_specific_type', False)
     all_type_selected = filters.get('allTypeSelected', False)
@@ -105,7 +104,7 @@ def build_fts_query_2(filters):
             "conjuncts": [],
             "disjuncts": []
         },
-        "index": "cbl_rawLog_v3",
+        "index": FTS_INDEX_NAME,
         "sort": [{"by": "field", "field": "dtEpoch", "mode": "min", "missing": "last"}]
     }
 
@@ -132,7 +131,13 @@ def build_fts_query_2(filters):
     # Handle search term
     if search_term:
         search_term = search_term.lstrip('+')
-        if any(op in search_term.upper() for op in [' AND ', ' OR ', ' NOT ']):
+        # Special case for "error", "Errors", or "errors"
+        if search_term.lower() in ['error', 'errors']:
+            fts_query["query"]["conjuncts"].append({
+                "field": "error",
+                "bool": True
+            })
+        elif any(op in search_term.upper() for op in [' AND ', ' OR ', ' NOT ']):
             terms = re.split(r'(\s+(?:AND|OR|NOT)\s+)', search_term, flags=re.IGNORECASE)
             terms = [t.strip() for t in terms if t.strip()]
             for term in terms:
@@ -270,7 +275,6 @@ def build_fts_query_2(filters):
 
     return json.dumps(fts_query, ensure_ascii=False)
 
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -278,10 +282,12 @@ def index():
 @app.route('/get_date_range', methods=['GET'])
 def get_date_range():
     query = """
-        SELECT MIN(dt) AS min_dt, MAX(dt) AS max_dt
+        SELECT 
+            MIN(dt) AS min_dt,
+            MAX(dt) AS max_dt
         FROM `cbl-log-reader`
-        WHERE dt IS NOT MISSING 
-        AND dt IS NOT MISSING
+        WHERE 
+            dt IS NOT MISSING
     """
     cache_key = hashlib.md5(query.encode('utf-8')).hexdigest()
     if DEBUG: print(f"Generated cache key: {cache_key}")
@@ -317,10 +323,13 @@ def get_date_range():
 @app.route('/get_types', methods=['GET'])
 def get_types():
     query = """
-        SELECT DISTINCT type
+        SELECT 
+            DISTINCT type
         FROM `cbl-log-reader`
-        WHERE type IS NOT NULL
-        ORDER BY type
+        WHERE 
+            type IS NOT NULL
+        ORDER BY 
+            type
     """
     maybe = hashlib.md5(query.encode('utf-8')).hexdigest()
     try:
@@ -367,93 +376,119 @@ def get_chart_data():
     if DEBUG: print(f"Filter parameters - types: {types}")
     if DEBUG: print(f"Filter parameters - search_term: {search_term}")
 
-    type_field = "type" if use_specific_type else "SPLIT(type, ':')[0]"
+    # Determine type field based on use_specific_type
+    type_field = "type" if use_specific_type else "mainType"
+    group_type = "specific" if use_specific_type else "general"
     if DEBUG: print(f"Type field determined: {type_field}")
 
-    where_clauses = ["dt IS NOT MISSING", "type IS NOT MISSING"]
-    if start_date and end_date:
-        where_clauses.append("REPLACE(SUBSTR(dt, 0, 19), 'T', ' ') >= $start_date AND REPLACE(SUBSTR(dt, 0, 19), 'T', ' ') <= $end_date")
+    # Get base FTS query string
+    fts_query_str = build_fts_query_2(filters)
+    
+    # Main FTS query
+    main_fts_query = json.loads(fts_query_str)
+    if "size" in main_fts_query:
+        del main_fts_query["size"]
+    if "sort" in main_fts_query:
+        del main_fts_query["sort"]
+    main_fts_query["fields"] = ["dt", type_field]  # Only dt and type_field needed
+    main_fts_query_str = json.dumps(main_fts_query, ensure_ascii=False)
 
-    query_params = {}
-    if start_date and end_date:
-        query_params = {'start_date': start_date, 'end_date': end_date}
+    # Error FTS query
+    error_fts_query = json.loads(fts_query_str)
+    if "size" in error_fts_query:
+        del error_fts_query["size"]
+    if "sort" in error_fts_query:
+        del error_fts_query["sort"]
+    error_fts_query["fields"] = ["dt"]  # Only dt needed
+    if "conjuncts" not in error_fts_query["query"]:
+        error_fts_query["query"]["conjuncts"] = []
+    error_fts_query["query"]["conjuncts"].append({
+        "field": "error",
+        "bool": True
+    })
+    error_fts_query_str = json.dumps(error_fts_query, ensure_ascii=False)
 
-    if search_term:
-        fts_query_str = build_fts_query(search_term, "rawLog")
-        if DEBUG:
-            print("NEW: ", fts_query_str, " | ", search_term, "\n")
-        where_clauses.append(f"SEARCH(`cbl-log-reader`, '{fts_query_str}')")
-        # Do not add to query_params
+    # Determine grouping granularity
+    group_by_length = 19 if grouping_mode == "by-second" else 16
+    group_by_clause = f"SUBSTR(meta.fields.dt, 0, {group_by_length})"
 
-    if DEBUG: print(f"Where clauses after date range and search: {where_clauses}")
-
-    type_where_clause = "TRUE"
-    if types:
-        type_values = [f"'{t}'" for t in types]
-        type_where_clause = f"{type_field} IN [{', '.join(type_values)}]"
-    if DEBUG: print(f"Type where clause: {type_where_clause}")
-
-    group_by_clause = "SUBSTR(dt, 0, 19)"
-    if grouping_mode == "by-minute":
-        group_by_clause = "SUBSTR(dt, 0, 16)"
-
+    # Main query
     main_query = f"""
-            SELECT REPLACE({group_by_clause}, 'T', ' ') AS second, {type_field} AS type, COUNT(*) AS count
-            FROM `{config['cb-bucket-name']}`
-            WHERE {' AND '.join(where_clauses)}
-            GROUP BY REPLACE({group_by_clause}, 'T', ' '), {type_field}
+        SELECT 
+            REPLACE({group_by_clause}, 'T', ' ') AS second, 
+            meta.fields.{type_field} AS type, 
+            COUNT(*) AS count
+        FROM `{config['cb-bucket-name']}` USE INDEX ({FTS_INDEX_NAME})
+            LET meta = SEARCH_META()
+        WHERE 
+            SEARCH(`{config['cb-bucket-name']}`, {main_fts_query_str})
+        GROUP BY 
+            REPLACE({group_by_clause}, 'T', ' '), meta.fields.{type_field}
     """
 
     if DEBUG: print(f"Main query constructed: {main_query}")
 
+    # Error query
     error_query = f"""
-                SELECT REPLACE({group_by_clause}, 'T', ' ') AS second, 'Error' AS type, COUNT(*) AS count
-                FROM `{config['cb-bucket-name']}`
-                WHERE {' AND '.join(where_clauses)} AND error = True
-                GROUP BY REPLACE({group_by_clause}, 'T', ' ')
+        SELECT
+            REPLACE({group_by_clause}, 'T', ' ') AS second, 
+            'Error' AS type, 
+            COUNT(*) AS count
+        FROM `{config['cb-bucket-name']}` USE INDEX ({FTS_INDEX_NAME})
+            LET meta = SEARCH_META()
+        WHERE
+            SEARCH(`{config['cb-bucket-name']}`, {error_fts_query_str})
+        GROUP BY
+            REPLACE({group_by_clause}, 'T', ' ')
     """
     if DEBUG: print(f"Error query constructed: {error_query}")
 
+    # Combine queries
     final_query = f"""
-            SELECT combined.second, combined.type, combined.count
-            FROM (
-                {main_query}
-                {'UNION ALL' if error_filter else ''}
-                {error_query if error_filter else ''}
-            ) AS combined
-            ORDER BY combined.second
+        SELECT 
+            combined.second, 
+            combined.type, 
+            combined.count
+        FROM (
+            {main_query}
+            {'UNION ALL' if error_filter else ''}
+            {error_query if error_filter else ''}
+        ) AS combined
+        ORDER BY 
+            combined.second
     """
     if DEBUG: print(f"Final query: {final_query}")
 
-    params_str = json.dumps(query_params, sort_keys=True)
-    query_string = final_query + params_str
+    # Generate cache key
+    query_string = final_query + json.dumps(filters, sort_keys=True)
     cache_key = hashlib.md5(query_string.encode('utf-8')).hexdigest()
     if DEBUG: print(f"Generated cache key: {cache_key}")
 
+    # Try cache first
     try:
-        print("Cache hit for key:", cache_key)
         cached_result = cbCache.get(cache_key).value
         if DEBUG: print(f"Cache hit for key: {cache_key}")
-        return jsonify(cached_result)
+        return jsonify({"status": "success", "data": cached_result, "type": group_type}), 200
     except DocumentNotFoundException:
         if DEBUG: print(f"Cache miss for DocId: {cache_key}")
         try:
-            result = cluster.query(final_query, **query_params)
+            result = cluster.query(final_query)
             data = [row for row in result]
             cbCache.upsert(cache_key, data)
-            return jsonify(data)
+            if DEBUG: print(f"Query executed successfully, returned {len(data)} rows")
+            return jsonify({"status": "success", "data": data, "type": group_type}), 200
         except CouchbaseException as e:
-            if DEBUG: print(traceback.format_exc())
-            return jsonify([]), 500
+            if DEBUG: print(f"Couchbase error executing query: {traceback.format_exc()}")
+            return jsonify({"status": "error", "message": str(e), "type": group_type}), 500
         except Exception as e:
             if DEBUG: print(f"Error executing query: {e}")
-            return jsonify([]), 500
-    except CouchbaseException:
-        if DEBUG: print(traceback.format_exc())
-        return jsonify([]), 500
+            return jsonify({"status": "error", "message": str(e), "type": group_type}), 500
+    except CouchbaseException as e:
+        if DEBUG: print(f"Couchbase error accessing cache: {traceback.format_exc()}")
+        return jsonify({"status": "error", "message": str(e), "type": group_type}), 500
     except Exception as e:
         if DEBUG: print(f"Error accessing cache: {e}")
-        return jsonify([]), 500
+        return jsonify({"status": "error", "message": str(e), "type": group_type}), 500
 
 @app.route('/get_pie_data', methods=['POST'])
 def get_pie_data():
@@ -488,7 +523,7 @@ def get_pie_data():
         SELECT
             meta.fields.{group_field} AS type_prefix,
             COUNT(meta.fields.{group_field}) AS count
-        FROM `{config['cb-bucket-name']}` USE INDEX (cbl_rawLog_v3)
+        FROM `{config['cb-bucket-name']}` USE INDEX ({FTS_INDEX_NAME})
             LET meta = SEARCH_META()
         WHERE 
             SEARCH(`{config['cb-bucket-name']}`, {fts_query_str})
@@ -539,9 +574,15 @@ def get_raw_data():
     fts_query_str = build_fts_query_2(filters)
 
     query = f"""
-        SELECT dt, type, error, rawLog, processId
-        FROM `{config['cb-bucket-name']}` USE INDEX (cbl_rawLog_v3)
-        WHERE SEARCH(`{config['cb-bucket-name']}`, {fts_query_str})
+        SELECT 
+            dt, 
+            type, 
+            error, 
+            rawLog, 
+            processId
+        FROM `{config['cb-bucket-name']}` USE INDEX ({FTS_INDEX_NAME})
+        WHERE 
+            SEARCH(`{config['cb-bucket-name']}`, {fts_query_str})
     """
 
     if DEBUG: print(f"Executing query for /get_raw_data: {query}")
@@ -594,4 +635,4 @@ if __name__ == '__main__':
     print("Registered routes:")
     for rule in app.url_map.iter_rules():
         print(f"{rule.endpoint}: {rule}")
-    app.run(debug=False)
+    app.run(debug=DEBUG, host='0.0.0.0', port=web_port)
