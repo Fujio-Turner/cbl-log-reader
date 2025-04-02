@@ -6,6 +6,8 @@ from couchbase.exceptions import CouchbaseException, DocumentNotFoundException
 import json
 import sys
 import hashlib
+import re
+from datetime import datetime  # Add this import
 
 print("Starting app.py from /Users/fujio.turner/Documents/demo/cbl-log-reader/cbl-log-reader/")
 
@@ -321,6 +323,8 @@ def get_pie_data():
     except Exception as e:
         if DEBUG: print(f"Error accessing cache: {e}")
         return jsonify([]), 500
+'''
+
 
 @app.route('/get_raw_data', methods=['POST'])
 def get_raw_data():
@@ -401,6 +405,213 @@ def get_raw_data():
     except Exception as e:
         if DEBUG: print(f"Error accessing cache: {e}")
         return jsonify([]), 500
+''' 
+
+
+@app.route('/get_raw_data', methods=['POST'])
+def get_raw_data():
+    filters = request.get_json()
+    if DEBUG: print(f"Request payload for /get_raw_data: {filters}")
+
+    use_specific_type = filters.get('use_specific_type', False)
+    types = filters.get('types', [])
+    start_date = filters.get('start_date')
+    end_date = filters.get('end_date')
+    search_term = filters.get('search_term', '')
+    # Handle limit from user input, default to 500 (matches HTML default)
+    try:
+        limit = int(filters.get('limit', 500))  # Default to 500 per HTML
+    except (ValueError, TypeError):
+        limit = 500  # Fallback to 500 if invalid
+
+    type_field = "type" if use_specific_type else "SPLIT(type, ':')[0]"
+
+    # Build the FTS query as a JSON object
+    fts_query = {
+        "explain": True,
+        "fields": ["*"],
+        "highlight": {},
+        "query": {
+            "conjuncts": [],  # Must conditions (AND)
+            "disjuncts": []   # Should conditions (OR, optional)
+        },
+        "index": "cbl_rawLog_v3",
+        "sort": [{"by": "field", "field": "dtEpoch", "mode": "min", "missing": "last"}]
+    }
+
+    # Only add "size" if limit > 0; omit for unlimited results
+    if limit > 0:
+        fts_query["size"] = limit
+
+    # Add date range to conjuncts using dtEpoch
+    if start_date and end_date:
+        try:
+            start_dt = datetime.strptime(start_date.replace(" ", "T") if "T" not in start_date else start_date, "%Y-%m-%dT%H:%M:%S.%f" if '.' in start_date else "%Y-%m-%dT%H:%M:%S")
+            end_dt = datetime.strptime(end_date.replace(" ", "T") if "T" not in end_date else end_date, "%Y-%m-%dT%H:%M:%S.%f" if '.' in end_date else "%Y-%m-%dT%H:%M:%S")
+            fts_query["query"]["conjuncts"].append({
+                "field": "dtEpoch",
+                "min": start_dt.timestamp(),
+                "max": end_dt.timestamp(),
+                "inclusive_min": True,
+                "inclusive_max": True
+            })
+        except ValueError as e:
+            if DEBUG: print(f"Error parsing date range: {e}")
+
+    # Handle search term
+    if search_term:
+        search_term = search_term.lstrip('+')
+        if any(op in search_term.upper() for op in [' AND ', ' OR ', ' NOT ']):
+            terms = re.split(r'(\s+(?:AND|OR|NOT)\s+)', search_term, flags=re.IGNORECASE)
+            terms = [t.strip() for t in terms if t.strip()]
+            for term in terms:
+                if term.upper() in ['AND', 'OR', 'NOT']:
+                    if term.upper() == 'OR' and DEBUG:
+                        print("Warning: OR in disjuncts; terms will boost relevance")
+                    if term.upper() == 'NOT' and DEBUG:
+                        print("Warning: NOT not fully supported; ignoring")
+                    continue
+                field_value = term[1:] if term.startswith('+') else term
+                if ':' in field_value:
+                    field, value = field_value.split(':', 1)
+                    field = field.strip().lower()
+                    value = value.strip()
+                    if field == "processid":
+                        try:
+                            int_value = int(value)
+                            fts_query["query"]["conjuncts"].append({
+                                "field": "processId",
+                                "min": int_value,
+                                "max": int_value,
+                                "inclusive_min": True,
+                                "inclusive_max": True
+                            })
+                        except ValueError:
+                            if '*' in value:
+                                fts_query["query"]["disjuncts"].append({
+                                    "wildcard": escape_fts_query_string(value),
+                                    "field": "processId"
+                                })
+                            else:
+                                fts_query["query"]["disjuncts"].append({
+                                    "match": escape_fts_query_string(value),
+                                    "field": "processId"
+                                })
+                    else:
+                        if '*' in value:
+                            fts_query["query"]["disjuncts"].append({
+                                "wildcard": escape_fts_query_string(value),
+                                "field": field
+                            })
+                        else:
+                            fts_query["query"]["disjuncts"].append({
+                                "match": escape_fts_query_string(value),
+                                "field": field
+                            })
+                else:
+                    if '*' in field_value:
+                        fts_query["query"]["disjuncts"].append({
+                            "wildcard": escape_fts_query_string(field_value),
+                            "field": "rawLog"
+                        })
+                    else:
+                        fts_query["query"]["disjuncts"].append({
+                            "match": escape_fts_query_string(field_value),
+                            "field": "rawLog"
+                        })
+        elif ':' in search_term:
+            field_value = search_term[1:] if search_term.startswith('+') else search_term
+            field, value = field_value.split(':', 1)
+            field = field.strip().lower()
+            value = value.strip()
+            if field == "processid":
+                try:
+                    int_value = int(value)
+                    fts_query["query"]["conjuncts"].append({
+                        "field": "processId",
+                        "min": int_value,
+                        "max": int_value,
+                        "inclusive_min": True,
+                        "inclusive_max": True
+                    })
+                except ValueError:
+                    if '*' in value:
+                        fts_query["query"]["disjuncts"].append({
+                            "wildcard": escape_fts_query_string(value),
+                            "field": "processId"
+                        })
+                    else:
+                        fts_query["query"]["disjuncts"].append({
+                            "match": escape_fts_query_string(value),
+                            "field": "processId"
+                        })
+            else:
+                if '*' in value:
+                    fts_query["query"]["disjuncts"].append({
+                        "wildcard": escape_fts_query_string(value),
+                        "field": field
+                    })
+                else:
+                    fts_query["query"]["disjuncts"].append({
+                        "match": escape_fts_query_string(value),
+                        "field": field
+                    })
+        else:
+            if '*' in search_term:
+                fts_query["query"]["disjuncts"].append({
+                    "wildcard": escape_fts_query_string(search_term),
+                    "field": "rawLog"
+                })
+            else:
+                fts_query["query"]["disjuncts"].append({
+                    "match": escape_fts_query_string(search_term),
+                    "field": "rawLog"
+                })
+
+    # Add type filters to disjuncts
+    if types:
+        for t in types:
+            if '*' in t:
+                fts_query["query"]["disjuncts"].append({
+                    "wildcard": escape_fts_query_string(t),
+                    "field": "type"
+                })
+            else:
+                fts_query["query"]["disjuncts"].append({
+                    "match": escape_fts_query_string(t),
+                    "field": "type"
+                })
+
+    # Clean up empty "conjuncts" or "disjuncts" arrays
+    if not fts_query["query"]["conjuncts"]:
+        del fts_query["query"]["conjuncts"]
+    if not fts_query["query"]["disjuncts"]:
+        del fts_query["query"]["disjuncts"]
+    if not fts_query["query"].get("conjuncts") and not fts_query["query"].get("disjuncts"):
+        fts_query["query"] = {"match_all": {}}
+
+    # Convert FTS query to JSON string
+    fts_query_str = json.dumps(fts_query, ensure_ascii=False)
+
+    # Construct the N1QL query with FTS JSON string
+    query = f"""
+        SELECT dt, type, error, rawLog, processId
+        FROM `{config['cb-bucket-name']}` USE INDEX (cbl_rawLog_v3)
+        WHERE SEARCH(`{config['cb-bucket-name']}`, {fts_query_str})
+    """
+
+    try:
+        # Execute the query
+        result = cluster.query(query)
+        # Collect results into a list
+        rows = [row for row in result]
+        if DEBUG: print(f"Query executed successfully, returned {len(rows)} rows")
+        # Return the data as JSON
+        return jsonify({"status": "success", "data": rows}), 200
+    except Exception as e:
+        if DEBUG: print(f"Error executing query: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.route('/get_log_report', methods=['GET'])
 def get_log_data():

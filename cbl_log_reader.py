@@ -85,7 +85,9 @@ class LogReader():
         full_date_pattern = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}:\d{2})?)\|'
         full_date_match = re.search(full_date_pattern, log_line)
         if full_date_match:
-            return [full_date_match.group(1), True]
+            dt_str = full_date_match.group(1)
+            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))  # Parse ISO-8601
+            return [dt_str, True, dt.timestamp()]  # Return float timestamp with microsecond precision
 
         time_only_pattern = r'^(\d{2}:\d{2}:\d{2}\.\d+)\|'
         time_only_match = re.search(time_only_pattern, log_line)
@@ -107,10 +109,12 @@ class LogReader():
             self.last_time = current_time
             
             # Combine base date and time into ISO-8601
-            iso_date = datetime.combine(base_date, current_time.time()).isoformat()
-            return [iso_date, False]  # False indicates non-ISO origin
+            dt = datetime.combine(base_date, current_time.time())
+            iso_date = dt.isoformat()
+            epoch = dt.timestamp()  # Return float timestamp with microsecond precision
+            return [iso_date, False, epoch]
         
-        return [None, False]
+        return [None, False, None]  # Return [dt, full_date_flag, epoch]
     
     def find_error_in_line(self, line, is_full_date):
         if self.check_error_end_of_line(line):
@@ -261,8 +265,9 @@ class LogReader():
         newData = {}
         newData["logLine"] = seq
         timestamp_result = self.extract_timestamp(line)
-        newData["dt"] = timestamp_result[0]  # Now ISO-8601, fake or real
+        newData["dt"] = timestamp_result[0]  # ISO-8601, fake or real
         newData["fullDate"] = timestamp_result[1]  # True if original ISO, False if fake
+        newData["dtEpoch"] = timestamp_result[2]  # Unix timestamp (float) with microsecond precision
         base_type = self.find_type(line, timestamp_result[1])
         is_full_date = timestamp_result[1]
 
@@ -303,26 +308,37 @@ class LogReader():
         # Dispatch to type-specific processors (only if not CBL:Info)
         if "type" not in newData:
             if base_type == "Sync":
+                newData["mainType"] = "Sync"
                 self.process_sync(line, is_full_date, newData)
             elif base_type == "WS":
+                newData["mainType"] = "WS"
                 self.process_ws(line, is_full_date, newData)
             elif base_type == "Query":
+                newData["mainType"] = "Query"
                 self.process_query(line, is_full_date, newData)
             elif base_type == "Changes":
+                newData["mainType"] = "Changes"
                 self.process_changes(line, is_full_date, newData)
             elif base_type == "BLIPMessages":
+                newData["mainType"] = "BLIPMessages"
                 self.process_blip_messages(line, is_full_date, newData)
             elif base_type == "BLIP":
+                newData["mainType"] = "BLIP"
                 self.process_blip(line, is_full_date, newData)
             elif base_type == "SQL":
+                newData["mainType"] = "SQL"
                 self.process_sql(line, is_full_date, newData)
             elif base_type == "DB":
+                newData["mainType"] = "DB"
                 self.process_db(line, is_full_date, newData)
             elif base_type == "Actor":
+                newData["mainType"] = "Actor"
                 self.process_actor(line, is_full_date, newData)
             elif base_type == "Zip":
+                newData["mainType"] = "Zip"
                 self.process_zip(line, is_full_date, newData)
             else:
+                newData["mainType"] = "Other"
                 if base_type:
                     newData["type"] = f"Other:{base_type}"
                 else:
@@ -874,6 +890,10 @@ class LogReader():
                 GROUP BY cbl.`type`
                 ORDER BY cbl.`type`
             """
+
+            if self.debug:
+                print(f"Error query: {error_query}")
+
             error_result = self.cluster.query(error_query, QueryOptions(timeout=timedelta(seconds=10)))
             error_rows = list(error_result)
             if self.debug:
@@ -900,6 +920,9 @@ class LogReader():
                                     OR bigHug.rejectionCount > 0
                                 ORDER BY startTime
                                 """
+            if self.debug:
+                print(f"Replication query: {replication_query}")
+            
             replication_result = self.cluster.query(replication_query, QueryOptions(timeout=timedelta(seconds=10)))
             replication_rows = list(replication_result)
             if self.debug:
@@ -930,7 +953,8 @@ class LogReader():
                                 AND cbl.`type` = 'Sync:Start'
                                 ORDER by cbl.dt
                                 """
-
+            if self.debug:
+                print(f"Replication start query result: {replication_start_query}")
             replication_starts_result = self.cluster.query(replication_start_query, QueryOptions(timeout=timedelta(seconds=10)))
             replication_starts_rows = list(replication_starts_result)
             if self.debug:
@@ -944,9 +968,6 @@ class LogReader():
                     } for row in replication_starts_rows
             ] 
             report["replicationStarts"] = replication_starts
-
-
-
 
 
             # Upsert the report document
@@ -1168,6 +1189,6 @@ if __name__ == "__main__":
         print("# python3 cbl_log_reader.py config.json")
         exit()
     log_reader = LogReader(config_file)
-    log_reader.read_log()
-    #log_reader.generate_report()
-    log_reader.start_web_server()
+    #log_reader.read_log()
+    log_reader.generate_report()
+    #log_reader.start_web_server()

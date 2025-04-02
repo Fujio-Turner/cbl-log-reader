@@ -137,7 +137,7 @@ $(document).ready(function() {
             contentType: 'application/json',
             data: JSON.stringify(filters),
             success: function(rawData) {
-                updateTable(rawData, searchTerm);
+                updateTable(rawData.data, searchTerm);
             },
             error: function() {
                 alert('Error fetching raw data');
@@ -319,6 +319,7 @@ function updateLineChart(data, errorFilter) {
     if (lineChart) {
         lineChart.data.datasets = chartDatasets;
         lineChart.options.scales.y.type = scaleType;
+        lineChart.options.scales.y.min = 0; 
         lineChart.update('none');
         console.log("Chart updated with new datasets:", lineChart.data.datasets);
     } else {
@@ -344,9 +345,10 @@ function updateLineChart(data, errorFilter) {
                     y: {
                         type: scaleType,
                         beginAtZero: true,
+                        min:0,
                         title: {
                             display: true,
-                            text: 'Error Count'
+                            text: '# of Logs of a Type'
                         },
                         ticks: {
                             min: yValues.length ? Math.min(...yValues) : 0,
@@ -506,16 +508,15 @@ function updateLineChart(data, errorFilter) {
     function updateTable(data, searchTerm) {
         let tableBody = document.querySelector('#data-table tbody');
         tableBody.innerHTML = ''; // Clear existing rows (resets the table)
-      
-        // Sort data by dt field (ascending chronological order)
-        const sortedData = [...data].sort((a, b) => new Date(a.dt) - new Date(b.dt));
-    
+
+        console.log('Data received in updateTable:', data);
+        
         if (!searchTerm || searchTerm.trim() === '') {
             // No search term, display as is
-            sortedData.forEach((row, index) => {
+            data.forEach((row, index) => {
                 let errorValue = row.error ? 'True' : '';
                 let errorClass = row.error ? 'error-true' : '';
-    
+        
                 tableBody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td>${index + 1}</td>
@@ -533,13 +534,13 @@ function updateLineChart(data, errorFilter) {
                 .filter(term => !['AND', 'OR', 'NOT'].includes(term.trim().toUpperCase()))
                 .map(term => term.trim())
                 .filter(term => term.length > 0);
-    
+        
             // Process terms to remove prefixes like +processId: or +processed:
             const cleanedTerms = terms.map(term => {
                 // Remove +processId: or +processed: followed by value
                 return term.replace(/^\+?(processId|rawLog|type|dt):/i, '');
             });
-    
+        
             // Create regex patterns for each cleaned term
             const regexPatterns = cleanedTerms.map(term => {
                 // Remove boost (^n)
@@ -553,8 +554,8 @@ function updateLineChart(data, errorFilter) {
                 
                 return new RegExp(pattern, 'gi');
             });
-    
-            sortedData.forEach((row, index) => {
+        
+            data.forEach((row, index) => {
                 let errorValue = row.error ? 'True' : '';
                 let errorClass = row.error ? 'error-true' : '';
                 let rawLogContent = row.rawLog || '';
@@ -566,7 +567,7 @@ function updateLineChart(data, errorFilter) {
                         `<span style="background-color: yellow">${match}</span>`
                     );
                 });
-    
+        
                 tableBody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td>${index + 1}</td>
@@ -578,10 +579,14 @@ function updateLineChart(data, errorFilter) {
                 `);
             });
         }
-      
+        
         // Update the row count
         document.getElementById('row-count').textContent = `(${data.length} rows)`;
     }
+
+
+
+
     // Apply filters on button click, radio change, date change, or search input change
     $('#apply-filters').click(fetchData);
    // $('input[name="type-mode"]').change(fetchData);
