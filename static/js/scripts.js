@@ -87,21 +87,24 @@ $(document).ready(function() {
 
     // Function to fetch data from the server
     function fetchData() {
+        // Get the selected values (returns array or empty array if nothing selected)
         let selectedTypes = $('#type-select').val() || [];
+        let selectedTypeResult = ($('#type-select').val() || []).length === $('#type-select option').length;
         let startDate = $('#start-date').val();
         let endDate = $('#end-date').val();
         let searchTerm = $('#search-input').val().trim();
         let useSpecificType = $('input[name="type-mode"]:checked').val() === 'specific';
         let groupingMode = $('input[name="grouping-mode"]:checked').val() || 'by-second';
         let errorFilter = selectedTypes.includes('Error');
-        let typeFilters = errorFilter ? [] : selectedTypes.filter(t => t !== 'Error');
+        //let typeFilters = errorFilter ? [] : selectedTypes.filter(t => t !== 'Error');
         let limit = $('#limit-select').val();
     
         let filters = {
             use_specific_type: useSpecificType,
             grouping_mode: groupingMode,
             error_filter: errorFilter,
-            types: typeFilters,
+            types: selectedTypes,
+            allTypeSelected: selectedTypeResult,
             search_term: searchTerm,
             limit: limit
         };
@@ -135,7 +138,7 @@ $(document).ready(function() {
             }),
             success: function(pieData) {
                 pieChartData = pieData;
-                updatePieChart(pieData);
+                updatePieChart(pieData.data);
             },
             error: function() {
                 alert('Error fetching pie chart data');
@@ -406,55 +409,57 @@ function updateLineChart(data, errorFilter) {
 
     
     // Function to update the pie chart
-    function updatePieChart(data) {
-        if (!data) {
-            console.log("No data to display for pie chart");
-            return;
-        }
-
-        let ctx = document.getElementById('pieChart').getContext('2d');
-        // Set canvas dimensions for high-DPI displays
-        const canvas = document.getElementById('pieChart');
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = canvas.clientWidth * dpr;
-        canvas.height = canvas.clientHeight * dpr;
-        ctx.scale(dpr, dpr);
-
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-        if (pieChart) {
-            pieChart.destroy();
-            pieChart = null;
-        }
-
-        let labels = data.map(item => item.type_prefix);
-        let counts = data.map(item => item.count);
-        let backgroundColors = labels.map(label => getTypeColor(label, false, [], true));
-
-        pieChart = new Chart(ctx, {
-            type: 'pie',
-            data: {
-                labels: labels,
-                datasets: [{
-                    data: counts,
-                    backgroundColor: backgroundColors
-                }]
-            },
-            options: {
-                responsive: true, // Make the pie chart responsive
-                maintainAspectRatio: false, // Allow the pie chart to stretch to fit the container
-                plugins: {
-                    legend: {
-                        position: 'right'
-                    }
-                },
-                title: {
-                    display: true,
-                    text: 'Type Distribution'
-                  }
-            }
-        });
+// Function to update the pie chart
+function updatePieChart(data) {
+    if (!data || !Array.isArray(data) || data.length === 0) {
+        console.log("No valid data to display for pie chart");
+        return;
     }
+
+    let ctx = document.getElementById('pieChart').getContext('2d');
+    // Set canvas dimensions for high-DPI displays
+    const canvas = document.getElementById('pieChart');
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    if (pieChart) {
+        pieChart.destroy();
+        pieChart = null;
+    }
+
+    // Filter and map data with fallback values
+    let labels = data.map(item => item && item.type_prefix ? item.type_prefix : 'Unknown');
+    let counts = data.map(item => item && item.count !== undefined ? item.count : 0);
+    let backgroundColors = labels.map(label => getTypeColor(label, false, [], true));
+
+    pieChart = new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: counts,
+                backgroundColor: backgroundColors
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right'
+                }
+            },
+            title: {
+                display: true,
+                text: 'Type Distribution'
+            }
+        }
+    });
+}
 
     // Helper function to assign consistent colors based on type
     function getTypeColor(type, errorFilter, specificTypes = [], forPieChart = false) {
