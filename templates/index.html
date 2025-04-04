@@ -19,7 +19,7 @@
     <h2>Couchbase Lite Log Reader</h2>
     <div class="container">
         <div class="sidebar">
-            <input type="text" id="search-input" placeholder="Search raw logs...">
+            <input type="text" id="search-input" placeholder="Search Like `rawlogs:error` or `error` ...">
             <h3>Filters</h3>
             <div class="filter-group">
                 <label><input type="radio" name="type-mode" value="general" checked> General Type</label>
@@ -31,9 +31,8 @@
                 <button id="unselect-all">Unselect All</button>
             </div>
             <div class="grouping-group">
-                <label><input type="radio" name="grouping-mode" value="all"> All</label>
-                <label><input type="radio" name="grouping-mode" value="by-second" checked> By Second</label>
-                <label><input type="radio" name="grouping-mode" value="by-minute"> By Minute</label>
+                <label><input type="radio" name="grouping-mode" value="by-second" checked>By Second</label>
+                <label><input type="radio" name="grouping-mode" value="by-minute">By Minute</label>
             </div>
             <input type="text" id="start-date" placeholder="Start Date (YYYY-MM-DD HH:mm:ss)">
             <input type="text" id="end-date" placeholder="End Date (YYYY-MM-DD HH:mm:ss)">

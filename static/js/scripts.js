@@ -6,16 +6,20 @@ $(document).ready(function() {
     // Initialize Flatpickr for date and time picking using native syntax
     flatpickr("#start-date", {
         enableTime: true,
-        dateFormat: "Y-m-d H:i:S",
+        enableSeconds: true, // Explicitly enable seconds
+        dateFormat: "Y-m-d H:i:S", // Use lowercase 's' for seconds
         time_24hr: true,
+        allowInput: true,
         minuteIncrement: 1,
         secondIncrement: 1
     });
 
     flatpickr("#end-date", {
         enableTime: true,
-        dateFormat: "Y-m-d H:i:S",
+        enableSeconds: true, // Explicitly enable seconds
+        dateFormat: "Y-m-d H:i:S", // Use lowercase 's' for seconds
         time_24hr: true,
+        allowInput: true,
         minuteIncrement: 1,
         secondIncrement: 1
     });
@@ -247,11 +251,11 @@ $(document).ready(function() {
 
             var more = ""
             if (entry.endpoint.type === "url") {
-                more += " AND ws:// OR wss://"
+                more += " AND rawLog:ws:// OR rawLog:wss://"
             }
 
             if (entry.endpoint.type === "message") {
-                more += " AND x-msg-conn"
+                more += " AND rawLog:x-msg-conn"
             }
 
             table2Body.insertAdjacentHTML('beforeend', `

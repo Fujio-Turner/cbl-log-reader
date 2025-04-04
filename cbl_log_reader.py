@@ -80,8 +80,8 @@ class LogReader():
             pattern = r'\[([^\]]+)\]'
             match = re.search(pattern, line)
             return match.group(1) if match else None
-    '''
-        def extract_timestamp(self, log_line):
+    
+    def extract_timestamp(self, log_line):
         full_date_pattern = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}:\d{2})?)\|'
         full_date_match = re.search(full_date_pattern, log_line)
         if full_date_match:
@@ -146,7 +146,9 @@ class LogReader():
             return [time_str, False, epoch]  # Return original time string, not ISO
         
         return [None, False, None]
+    '''
     
+
     def find_error_in_line(self, line, is_full_date):
         if self.check_error_end_of_line(line):
             return False
