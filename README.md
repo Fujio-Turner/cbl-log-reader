@@ -39,11 +39,11 @@ Additionally, it generates a summary report (`log_report`) to provide insights i
 2. **Create Indexes**:
    - Replace older indexes with these optimized ones:
      ```sql
-     CREATE INDEX `big_hug_v2` ON `cbl-log-reader`((all (`processId`)),`type`,`dt`,`processId`,ifmissingornull((`syncCommitStats`.`numInserts`), 0),ifmissingornull((`replicatorStatus`.`docs`), 0)) WHERE ((split(`type`, ":")[0]) = "Sync")
-     CREATE INDEX `error_type_dt_v1` ON `cbl-log-reader`(`error`,`type`,`dt`)
-     CREATE INDEX `dt_v1` ON `cbl-log-reader`(`dt`)
-     CREATE INDEX `long_time_v2` ON `cbl-log-reader`(replace(substr0(`dt`, 0, 19), "T", " "),(split(`type`, ":")[0]),`type`,`dt`)
-     CREATE INDEX `type_dt_v1` ON `cbl-log-reader`(`type`,`dt`)
+     CREATE INDEX `big_hug_v2` ON `cbl-log-reader`((all (`processId`)),`type`,`dt`,`processId`,ifmissingornull((`syncCommitStats`.`numInserts`), 0),ifmissingornull((`replicatorStatus`.`docs`), 0)) WHERE ((split(`type`, ":")[0]) = "Sync");
+     CREATE INDEX `error_type_dt_v1` ON `cbl-log-reader`(`error`,`type`,`dt`);
+     CREATE INDEX `dt_v1` ON `cbl-log-reader`(`dt`);
+     CREATE INDEX `long_time_v2` ON `cbl-log-reader`(replace(substr0(`dt`, 0, 19), "T", " "),(split(`type`, ":")[0]),`type`,`dt`);
+     CREATE INDEX `type_dt_v1` ON `cbl-log-reader`(`type`,`dt`);
      ```
    - These support the report queries efficiently.
 
