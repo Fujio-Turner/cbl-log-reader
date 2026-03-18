@@ -8,7 +8,26 @@ const stakeColors = [
     '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990'
 ];
 
+// Persist stakes to Couchbase cache bucket
+function saveStakes() {
+    $.ajax({
+        url: '/save_stakes',
+        type: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(stakes)
+    });
+}
+
 $(document).ready(function() {
+    // Load persisted stakes from Couchbase
+    $.get('/get_stakes', function(resp) {
+        if (resp.status === 'success' && resp.data && Object.keys(resp.data).length > 0) {
+            stakes = resp.data;
+            stakeColorIndex = Object.keys(stakes).length;
+            updateStakesPanel();
+        }
+    });
+
     flatpickr("#start-date", {
         enableTime: true,
         enableSeconds: true,
@@ -61,6 +80,7 @@ $(document).ready(function() {
     $.get('/get_types', function(types) {
         let select = $('#type-select');
         select.append(`<option value="Error" selected>Error</option>`);
+        select.append(`<option value="📌 Stakes" selected>📌 Stakes</option>`);
         types.forEach(function(type) {
             select.append(`<option value="${type}" selected>${type}</option>`);
         });
@@ -81,6 +101,7 @@ $(document).ready(function() {
         console.error("Failed to fetch types, proceeding with default 'Error' option.");
         let select = $('#type-select');
         select.append(`<option value="Error" selected>Error</option>`);
+        select.append(`<option value="📌 Stakes" selected>📌 Stakes</option>`);
         console.log("Type select options after population (fallback):", $('#type-select').val());
 
         $.get('/get_date_range', function(dateRange) {
@@ -336,25 +357,26 @@ function updateLineChart(data, errorFilter) {
             name: type,
             type: 'line',
             data: datasets[type].sort((a, b) => a[0].localeCompare(b[0])),
-            smooth: 0.1,
+            smooth: 0.4,
             showSymbol: false,
             itemStyle: { color: getTypeColor(type, errorFilter, specificTypes) },
             markLine: { data: [] }
         };
     });
 
-    // Re-apply existing stakes as markLine on the first series
-    if (series.length > 0 && Object.keys(stakes).length > 0) {
+    // Re-apply existing stakes as markLine on the first series (if visible)
+    if (series.length > 0 && Object.keys(stakes).length > 0 && stakesVisible()) {
         let markData = [];
-        Object.keys(stakes).forEach(stakeId => {
-            let s = stakes[stakeId];
+        Object.keys(stakes).forEach(docKey => {
+            let s = stakes[docKey];
+            let label = stakeLabel(s.rawTimestamp);
             markData.push({
-                name: '#' + (s.rowIndex + 1),
+                name: label,
                 xAxis: s.timestamp,
                 lineStyle: { color: s.color, type: 'dashed', width: 2 },
-                label: { show: true, formatter: '#' + (s.rowIndex + 1), color: '#fff',
+                label: { show: true, formatter: label, color: '#fff',
                          backgroundColor: s.color, padding: [2, 4], borderRadius: 2 },
-                _stakeId: stakeId
+                _stakeId: docKey
             });
         });
         series[0].markLine = { silent: false, symbol: 'none', data: markData };
@@ -477,12 +499,12 @@ function updatePieChart(data) {
                 let errorValue = row.error ? 'True' : '';
                 let errorClass = row.error ? 'error-true' : '';
                 let timestamp = extractTimestamp(row.rawLog || '');
-                let stakeId = 'stake-' + index;
+                let docKey = row.docKey || '';
 
                 tableBody.insertAdjacentHTML('beforeend', `
-                <tr id="row-${index}" data-timestamp="${timestamp}">
+                <tr id="row-${index}" data-timestamp="${timestamp}" data-doc-key="${docKey}">
                     <td>${index + 1}</td>
-                    <td><button class="stake-btn" data-stake-id="${stakeId}" data-row-index="${index}" data-timestamp="${timestamp}" style="padding:2px 8px;cursor:pointer;">📍</button></td>
+                    <td><button class="stake-btn" data-doc-key="${docKey}" data-row-index="${index}" data-timestamp="${timestamp}" style="padding:2px 8px;cursor:pointer;">📍</button></td>
                     <td>${row.type || ''}</td>
                     <td class="${errorClass}">${errorValue}</td>
                     <td>${row.rawLog || ''}</td>
@@ -513,7 +535,7 @@ function updatePieChart(data) {
                 let errorClass = row.error ? 'error-true' : '';
                 let rawLogContent = row.rawLog || '';
                 let timestamp = extractTimestamp(rawLogContent);
-                let stakeId = 'stake-' + index;
+                let docKey = row.docKey || '';
 
                 let highlightedRawLog = rawLogContent;
                 regexPatterns.forEach(regex => {
@@ -523,9 +545,9 @@ function updatePieChart(data) {
                 });
 
                 tableBody.insertAdjacentHTML('beforeend', `
-                <tr id="row-${index}" data-timestamp="${timestamp}">
+                <tr id="row-${index}" data-timestamp="${timestamp}" data-doc-key="${docKey}">
                     <td>${index + 1}</td>
-                    <td><button class="stake-btn" data-stake-id="${stakeId}" data-row-index="${index}" data-timestamp="${timestamp}" style="padding:2px 8px;cursor:pointer;">📍</button></td>
+                    <td><button class="stake-btn" data-doc-key="${docKey}" data-row-index="${index}" data-timestamp="${timestamp}" style="padding:2px 8px;cursor:pointer;">📍</button></td>
                     <td>${row.type || ''}</td>
                     <td class="${errorClass}">${errorValue}</td>
                     <td>${highlightedRawLog}</td>
@@ -536,6 +558,9 @@ function updatePieChart(data) {
         }
 
         document.getElementById('row-count').textContent = `(${data.length} rows)`;
+
+        // Re-mark any rows that match existing stakes
+        reapplyStakesToTable();
     }
 
     function extractTimestamp(rawLog) {
@@ -546,18 +571,63 @@ function updatePieChart(data) {
         return '';
     }
 
+    // Check if stakes should be visible (selected in type filter)
+    function stakesVisible() {
+        let selected = $('#type-select').val() || [];
+        return selected.includes('📌 Stakes');
+    }
+
+    // Update the stakes management panel in the sidebar
+    function updateStakesPanel() {
+        let tbody = document.querySelector('#stakes-table tbody');
+        let emptyMsg = document.getElementById('stakes-empty');
+        tbody.innerHTML = '';
+        let keys = Object.keys(stakes);
+        if (keys.length === 0) {
+            emptyMsg.style.display = '';
+            return;
+        }
+        emptyMsg.style.display = 'none';
+        keys.forEach(docKey => {
+            let s = stakes[docKey];
+            let label = stakeLabel(s.rawTimestamp);
+            tbody.insertAdjacentHTML('beforeend', `
+                <tr class="stake-panel-row" data-doc-key="${docKey}" style="cursor:default;">
+                    <td style="width:10px;padding:2px;">
+                        <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${s.color};"></span>
+                    </td>
+                    <td style="padding:2px;font-size:11px;font-family:monospace;position:relative;">${label}</td>
+                    <td style="padding:2px;text-align:right;">
+                        <button class="stake-panel-remove btn btn-ghost btn-xs" data-doc-key="${docKey}" title="Remove stake">✕</button>
+                    </td>
+                </tr>
+            `);
+        });
+    }
+
+    // Extract "ss.fff" from a timestamp like "12:34:56.789123" for stake labels
+    function stakeLabel(timestamp) {
+        if (!timestamp) return '?';
+        let match = timestamp.match(/(\d{2})\.(\d+)$/);  // last "ss.fractional"
+        if (match) return match[1] + '.' + match[2].substring(0, 3);
+        match = timestamp.match(/:(\d{2})$/);  // fallback: just seconds
+        if (match) return match[1];
+        return timestamp.slice(-6);
+    }
+
     // ─── Stakes (ECharts markLine) ───
-    function addStakeToChart(chart, stakeId, timeValue, color, rowIndex) {
+    function addStakeToChart(chart, stakeId, timeValue, color, timestamp) {
         if (!chart) return;
         let option = chart.getOption();
         if (!option.series || !option.series.length) return;
 
+        let label = stakeLabel(timestamp);
         let markData = (option.series[0].markLine && option.series[0].markLine.data) || [];
         markData.push({
-            name: '#' + (rowIndex + 1),
+            name: label,
             xAxis: timeValue,
             lineStyle: { color: color, type: 'dashed', width: 2 },
-            label: { show: true, formatter: '#' + (rowIndex + 1), color: '#fff',
+            label: { show: true, formatter: label, color: '#fff',
                      backgroundColor: color, padding: [2, 4], borderRadius: 2 },
             _stakeId: stakeId
         });
@@ -573,48 +643,102 @@ function updatePieChart(data) {
         chart.setOption({ series: [{ markLine: { data: markData } }] });
     }
 
-    function addStake(stakeId, timestamp, rowIndex, color) {
+    // Gantt stake helpers — uses the hidden _stakes series (index 1)
+    function addStakeToGantt(chart, stakeId, timeValue, color, timestamp) {
+        if (!chart) return;
+        let option = chart.getOption();
+        if (!option.series || option.series.length < 2) return;
+        let label = stakeLabel(timestamp);
+        let markData = (option.series[1].markLine && option.series[1].markLine.data) || [];
+        markData.push({
+            name: label,
+            xAxis: timeValue,
+            lineStyle: { color: color, type: 'dashed', width: 2 },
+            label: { show: true, formatter: label, color: '#fff',
+                     backgroundColor: color, padding: [2, 4], borderRadius: 2 },
+            _stakeId: stakeId
+        });
+        chart.setOption({ series: [{}, { markLine: { silent: false, symbol: 'none', data: markData } }] });
+    }
+
+    function removeStakeFromGantt(chart, stakeId) {
+        if (!chart) return;
+        let option = chart.getOption();
+        if (!option.series || option.series.length < 2) return;
+        let markData = ((option.series[1].markLine && option.series[1].markLine.data) || []).filter(d => d._stakeId !== stakeId);
+        chart.setOption({ series: [{}, { markLine: { data: markData } }] });
+    }
+
+    function addStake(docKey, timestamp, rowIndex, color) {
         if (!lineChart || !timestamp) return;
         let timeValue = timestamp;
         if (/^\d{2}:\d{2}:\d{2}/.test(timestamp)) {
             let startDate = $('#start-date').val().split(' ')[0] || '2026-01-01';
             timeValue = startDate + ' ' + timestamp;
         }
-        stakes[stakeId] = { color: color, timestamp: timeValue, rowIndex: rowIndex };
-        addStakeToChart(lineChart, stakeId, timeValue, color, rowIndex);
-        addStakeToChart(errorRateChart, stakeId, timeValue, color, rowIndex);
+        stakes[docKey] = { color: color, timestamp: timeValue, rawTimestamp: timestamp, docKey: docKey };
+        if (stakesVisible()) {
+            addStakeToChart(lineChart, docKey, timeValue, color, timestamp);
+            addStakeToChart(errorRateChart, docKey, timeValue, color, timestamp);
+            addStakeToGantt(syncGanttChart, docKey, timeValue, color, timestamp);
+        }
+        updateStakesPanel();
+        saveStakes();
     }
 
-    function removeStake(stakeId) {
-        if (!lineChart) return;
-        let stake = stakes[stakeId];
+    function removeStake(docKey) {
+        let stake = stakes[docKey];
         if (stake) {
-            let row = document.getElementById('row-' + stake.rowIndex);
+            let row = document.querySelector(`tr[data-doc-key="${docKey}"]`);
             if (row) {
                 row.style.backgroundColor = '';
                 let btn = row.querySelector('.stake-btn');
                 if (btn) {
                     btn.textContent = '📍';
                     btn.style.backgroundColor = '';
+                    btn.style.color = '';
+                    btn.style.border = '';
                 }
             }
         }
-        delete stakes[stakeId];
-        removeStakeFromChart(lineChart, stakeId);
-        removeStakeFromChart(errorRateChart, stakeId);
+        delete stakes[docKey];
+        removeStakeFromChart(lineChart, docKey);
+        removeStakeFromChart(errorRateChart, docKey);
+        removeStakeFromGantt(syncGanttChart, docKey);
+        updateStakesPanel();
+        saveStakes();
+    }
+
+    // Re-mark table rows that match existing stakes (called after table render)
+    function reapplyStakesToTable() {
+        Object.keys(stakes).forEach(docKey => {
+            let stake = stakes[docKey];
+            let row = document.querySelector(`tr[data-doc-key="${docKey}"]`);
+            if (row) {
+                row.style.backgroundColor = stake.color + '22';
+                let btn = row.querySelector('.stake-btn');
+                if (btn) {
+                    btn.textContent = '❌';
+                    btn.style.backgroundColor = stake.color;
+                    btn.style.color = '#fff';
+                    btn.style.borderRadius = '4px';
+                    btn.style.border = 'none';
+                }
+            }
+        });
     }
 
     $(document).on('click', '.stake-btn', function() {
         let btn = $(this);
-        let stakeId = btn.data('stake-id');
+        let docKey = btn.data('doc-key');
         let rowIndex = btn.data('row-index');
         let timestamp = btn.data('timestamp');
-        if (stakes[stakeId]) {
-            removeStake(stakeId);
+        if (stakes[docKey]) {
+            removeStake(docKey);
         } else {
             let color = stakeColors[stakeColorIndex % stakeColors.length];
             stakeColorIndex++;
-            addStake(stakeId, timestamp, rowIndex, color);
+            addStake(docKey, timestamp, rowIndex, color);
             let row = document.getElementById('row-' + rowIndex);
             if (row) {
                 row.style.backgroundColor = color + '22';
@@ -627,10 +751,38 @@ function updatePieChart(data) {
         }
     });
 
+    // Remove stake from the sidebar panel
+    $(document).on('click', '.stake-panel-remove', function() {
+        let docKey = $(this).data('doc-key');
+        if (stakes[docKey]) removeStake(docKey);
+    });
+
+    // Hover on stake panel row — fetch rawLog from Couchbase
+    $(document).on('mouseenter', '.stake-panel-row', function() {
+        let row = $(this);
+        if (row.find('.stake-tooltip').length) return; // already showing
+        let docKey = row.data('doc-key');
+        $.get('/get_doc/' + encodeURIComponent(docKey), function(resp) {
+            if (resp.status === 'success' && resp.data && resp.data.rawLog) {
+                let snippet = resp.data.rawLog.length > 120 ? resp.data.rawLog.substring(0, 120) + '…' : resp.data.rawLog;
+                row.find('td:eq(1)').append(
+                    `<div class="stake-tooltip" style="position:absolute;z-index:999;background:#333;color:#fff;
+                     padding:6px 8px;border-radius:4px;font-size:10px;max-width:300px;word-break:break-all;
+                     white-space:normal;margin-top:2px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">${snippet}</div>`
+                );
+            }
+        });
+    });
+    $(document).on('mouseleave', '.stake-panel-row', function() {
+        $(this).find('.stake-tooltip').remove();
+    });
+
     $('#clear-stakes').click(function() {
-        Object.keys(stakes).forEach(stakeId => removeStake(stakeId));
+        Object.keys(stakes).forEach(docKey => removeStake(docKey));
         stakes = {};
         stakeColorIndex = 0;
+        updateStakesPanel();
+        saveStakes();
     });
 
     // Apply filters on button click or search enter
@@ -800,26 +952,27 @@ function updateErrorRateChart(data) {
         ],
         series: [
             { name: 'Error Rate %', type: 'line', data: rateData, yAxisIndex: 0,
-              areaStyle: { opacity: 0.1 }, itemStyle: { color: '#DC143C' }, smooth: 0.2 },
+              areaStyle: { opacity: 0.1 }, itemStyle: { color: '#DC143C' }, smooth: 0.4 },
             { name: 'Total Logs', type: 'line', data: totalData, yAxisIndex: 1,
-              lineStyle: { type: 'dashed' }, itemStyle: { color: '#1E90FF' }, smooth: 0.2, showSymbol: false },
+              lineStyle: { type: 'dashed' }, itemStyle: { color: '#1E90FF' }, smooth: 0.4, showSymbol: false },
             { name: 'Error Count', type: 'line', data: errorData, yAxisIndex: 1,
-              itemStyle: { color: '#000' }, smooth: 0.2, showSymbol: false }
+              itemStyle: { color: '#000' }, smooth: 0.4, showSymbol: false }
         ]
     };
 
-    // Re-apply existing stakes as markLine on the first series
-    if (Object.keys(stakes).length > 0) {
+    // Re-apply existing stakes as markLine on the first series (if visible)
+    if (Object.keys(stakes).length > 0 && stakesVisible()) {
         let markData = [];
-        Object.keys(stakes).forEach(stakeId => {
-            let s = stakes[stakeId];
+        Object.keys(stakes).forEach(docKey => {
+            let s = stakes[docKey];
+            let label = stakeLabel(s.rawTimestamp);
             markData.push({
-                name: '#' + (s.rowIndex + 1),
+                name: label,
                 xAxis: s.timestamp,
                 lineStyle: { color: s.color, type: 'dashed', width: 2 },
-                label: { show: true, formatter: '#' + (s.rowIndex + 1), color: '#fff',
+                label: { show: true, formatter: label, color: '#fff',
                          backgroundColor: s.color, padding: [2, 4], borderRadius: 2 },
-                _stakeId: stakeId
+                _stakeId: docKey
             });
         });
         option.series[0].markLine = { silent: false, symbol: 'none', data: markData };
@@ -1054,13 +1207,33 @@ function updateSyncGantt(logReportData) {
             { type: 'slider', xAxisIndex: 0, bottom: 5 },
             { type: 'inside', xAxisIndex: 0 }
         ],
-        series: [{
-            type: 'custom',
-            renderItem: renderGanttItem,
-            encode: { x: [1, 2], y: 0 },
-            data: ganttData
-        }]
+        series: [
+            {
+                type: 'custom',
+                renderItem: renderGanttItem,
+                encode: { x: [1, 2], y: 0 },
+                data: ganttData
+            },
+            {
+                // Hidden line series to hold stake markLines
+                name: '_stakes',
+                type: 'line',
+                data: [],
+                silent: true,
+                showSymbol: false,
+                lineStyle: { width: 0 },
+                markLine: { data: [] }
+            }
+        ]
     }, true);
+
+    // Re-apply existing stakes (if visible)
+    if (Object.keys(stakes).length > 0 && stakesVisible()) {
+        Object.keys(stakes).forEach(docKey => {
+            let s = stakes[docKey];
+            addStakeToGantt(syncGanttChart, docKey, s.timestamp, s.color, s.rawTimestamp);
+        });
+    }
 }
 
 // ─── Sync Timeline (ECharts horizontal bar) ───

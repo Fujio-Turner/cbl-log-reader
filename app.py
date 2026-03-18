@@ -616,6 +616,7 @@ def get_raw_data():
 
     query = f"""
         SELECT 
+            META().id AS docKey,
             dt, 
             type, 
             error, 
@@ -655,6 +656,38 @@ def get_raw_data():
         return jsonify({"status": "error", "message": str(e)}), 500
     except Exception as e:
         if DEBUG: print(f"Error accessing cache: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/get_stakes', methods=['GET'])
+def get_stakes():
+    try:
+        data = cbCache.get("stakes").value
+        return jsonify({"status": "success", "data": data}), 200
+    except DocumentNotFoundException:
+        return jsonify({"status": "success", "data": {}}), 200
+    except Exception as e:
+        if DEBUG: print(f"Error fetching stakes: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/save_stakes', methods=['POST'])
+def save_stakes():
+    try:
+        data = request.get_json()
+        cbCache.upsert("stakes", data)
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        if DEBUG: print(f"Error saving stakes: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/get_doc/<path:doc_key>', methods=['GET'])
+def get_doc(doc_key):
+    try:
+        data = collection.get(doc_key).value
+        return jsonify({"status": "success", "data": data}), 200
+    except DocumentNotFoundException:
+        return jsonify({"status": "error", "message": "Document not found"}), 404
+    except Exception as e:
+        if DEBUG: print(f"Error fetching doc '{doc_key}': {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/get_log_report', methods=['GET'])
