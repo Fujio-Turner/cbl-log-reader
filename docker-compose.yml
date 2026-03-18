@@ -1,0 +1,14 @@
+services:
+  cbl-log-reader:
+    build: .
+    ports:
+      - "5099:5099"
+    volumes:
+      - ./cbl_logs:/app/cbl_logs
+      - ./config.json:/app/config.json
+    environment:
+      - CBL_FILE_TO_PARSE=/app/cbl_logs/cbl-log-all.txt
+      - CBL_CB_HOST=host.docker.internal
+    # To process logs first, then start dashboard:
+    # docker compose run cbl-log-reader python3 cbl_log_reader.py config.json
+    # Then: docker compose up

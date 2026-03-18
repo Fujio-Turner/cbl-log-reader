@@ -1,30 +1,37 @@
-# Python-specific
+# Python virtual environments
+venv/
+env/
+.venv/
+.Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.env
-
-# macOS-specific
-.DS_Store
-
-# Temporary/test files
-random.txt
-*.log
-*.tmp
-
-# Optional/documentation files (uncomment if you don’t want these in repo)
-# optional_fts_index.json
-# sample-sql-queries.md
-
-# Build/dependency files (uncomment if not using Pipfile)
+*.egg-info/
+dist/
+build/
 Pipfile
 Pipfile.lock
 
-# IDE-specific (optional, add if you use these)
+# macOS
+.DS_Store
+
+# IDE
 .vscode/
 .idea/
+
+# Couchbase Lite log files (user data)
+cbl_logs/
+*.cbllog
+
+# Couchbase Lite CLI tools (large binaries)
+cbl_cli/
+
+# Environment / secrets
+.env
 local_config.json
+
+# Temp files
+*.log
+*.tmp
+random.txt

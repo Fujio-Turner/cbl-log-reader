@@ -24,6 +24,12 @@ h2 {
     height: 455px;
 }
 
+.tabs-full-width {
+    width: 100%;
+    height: 455px;
+    overflow: hidden;
+}
+
 .sidebar {
     width: 250px;
     padding: 10px;
@@ -55,12 +61,9 @@ h2 {
     margin: 0 auto;
     width: 50%;
     height: 450px;
-    padding: 10px; /* Optional: adds some spacing */
+    padding: 10px;
 }
 
-#pieChart {
-    width: 100% !important;
-}
 
 .table-container {
     margin-top: 10px;
@@ -216,7 +219,7 @@ h2 {
 
   .left-section {
     width: 50%;
-    padding: 10px; /* Optional: adds some spacing */
+    padding: 10px;
 }
 
 
@@ -246,3 +249,4 @@ h2 {
   .hidden {
     display: none;
 }
+

@@ -1,16 +1,17 @@
 <!DOCTYPE html>
-<html>
+<html data-theme="corporate">
 <head>
     <title>Couchbase Lite Log Reader</title>
+    <!-- DaisyUI v5 + Tailwind CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <!-- jQuery -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <!-- Flatpickr -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <!-- Moment.js and Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.0/dist/chartjs-adapter-moment.min.js"></script>
+    <!-- Apache ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <!-- External CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/AddTabs.css') }}">
@@ -19,49 +20,103 @@
     <h2>Couchbase Lite Log Reader</h2>
     <div class="container">
         <div class="sidebar">
-            <input type="text" id="search-input" placeholder="Search Like `rawlogs:error` or `error` ...">
-            <h3>Filters</h3>
-            <div class="filter-group">
-                <label><input type="radio" name="type-mode" value="general" checked> General Type</label>
-                <label><input type="radio" name="type-mode" value="specific"> Specific Type</label>
-            </div>
-            <div id="type-filters">
-                <select multiple id="type-select"></select>
-                <button id="select-all">Select All</button>
-                <button id="unselect-all">Unselect All</button>
-            </div>
-            <div class="grouping-group">
-                <label><input type="radio" name="grouping-mode" value="by-second" checked>By Second</label>
-                <label><input type="radio" name="grouping-mode" value="by-minute">By Minute</label>
-            </div>
-            <input type="text" id="start-date" placeholder="Start Date (YYYY-MM-DD HH:mm:ss)">
-            <input type="text" id="end-date" placeholder="End Date (YYYY-MM-DD HH:mm:ss)">
-            <button id="apply-filters">Apply Filters</button>
-            <div>
-                ---
-            </div>
-        </div>
-        <div class="main">
-            <div class="chart-controls">
-                <label><input type="radio" name="scale-mode" value="linear" checked> Linear</label>
-                <label><input type="radio" name="scale-mode" value="logarithmic"> Logarithmic</label>
-                <button id="zoom-reset">Reset Zoom</button>
-            </div>
-            <div class="line-chart-container">
-                <canvas id="lineChart"></canvas>
+            <div class="flex items-center gap-1">
+                <input type="text" id="search-input" class="input input-bordered w-full" placeholder="Search logs: push error, type:Sync, &quot;exact phrase&quot;, -exclude">
+                <div class="dropdown dropdown-end">
+                    <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-circle">?</div>
+                    <div tabindex="0" class="dropdown-content bg-base-200 rounded-box z-50 w-72 p-4 shadow-lg" style="position:fixed;">
+                        <p class="font-bold mb-2">Search Syntax Guide</p>
+                        <ul class="text-sm space-y-1 list-disc pl-4">
+                            <li><code>push error</code> → both terms (AND)</li>
+                            <li><code>push OR error</code> → either term</li>
+                            <li><code>-healthcheck</code> or <code>NOT term</code> → exclude</li>
+                            <li><code>"connection refused"</code> → exact phrase</li>
+                            <li><code>type:Sync</code> → field filter</li>
+                            <li><code>pid:1047</code> → process ID</li>
+                            <li><code>error:true</code> → errors only</li>
+                            <li><code>retry*</code> → prefix match</li>
+                        </ul>
+                        <div class="divider my-1"></div>
+                        <a href="/search-help" target="_blank" class="link link-primary text-sm">Full Search &amp; Filter Guide →</a>
+                    </div>
+                </div>
             </div>
 
-            <div class="container-middle-right">
-                <div class="left-section">
+            <div class="divider">Filters</div>
+
+            <fieldset class="fieldset">
+                <legend class="fieldset-legend">Type Mode</legend>
+                <label class="label cursor-pointer gap-2">
+                    <span class="text-sm">General</span>
+                    <input type="checkbox" id="type-mode-toggle" class="toggle toggle-sm toggle-primary">
+                    <span class="text-sm">Specific</span>
+                </label>
+            </fieldset>
+
+            <fieldset class="fieldset" id="type-filters">
+                <legend class="fieldset-legend">Log Types</legend>
+                <select multiple id="type-select" class="select select-bordered w-full text-sm" style="height:150px;"></select>
+                <div class="flex gap-1 mt-1">
+                    <button id="select-all" class="btn btn-outline btn-sm flex-1">Select All</button>
+                    <button id="unselect-all" class="btn btn-outline btn-sm flex-1">Unselect All</button>
+                </div>
+            </fieldset>
+
+            <fieldset class="fieldset">
+                <legend class="fieldset-legend">Grouping</legend>
+                <label class="label cursor-pointer gap-2">
+                    <span class="text-sm">By Second</span>
+                    <input type="checkbox" id="grouping-mode-toggle" class="toggle toggle-sm toggle-primary">
+                    <span class="text-sm">By Minute</span>
+                </label>
+            </fieldset>
+
+            <fieldset class="fieldset">
+                <legend class="fieldset-legend">Date Range</legend>
+                <input type="text" id="start-date" class="input input-bordered w-full" placeholder="Start Date">
+                <input type="text" id="end-date" class="input input-bordered w-full mt-1" placeholder="End Date">
+            </fieldset>
+
+            <button id="apply-filters" class="btn btn-primary w-full mt-2">Apply Filters</button>
+            <button id="reset-filters" class="btn btn-outline btn-sm w-full mt-1">Reset Filters</button>
+            <div class="divider"></div>
+        </div>
+        <div class="main">
+            <div class="chart-controls flex items-center gap-2">
+                <label class="label cursor-pointer gap-1">
+                    <span class="text-sm">Linear</span>
+                    <input type="checkbox" id="scale-mode-toggle" class="toggle toggle-sm toggle-primary">
+                    <span class="text-sm">Log</span>
+                </label>
+                <button id="use-chart-range" class="btn btn-accent btn-sm" title="Set date pickers to current chart X-axis range">📅 Use Chart's X-Axis Values</button>
+            </div>
+            <div class="line-chart-container">
+                <div id="lineChart" style="width:100%;height:100%;"></div>
+            </div>
+
+            <div class="tabs-full-width">
                     <div data-addui='tabs'>
                         <div role='tabs'>
+                          <!-- Sync / Replication -->
                           <div>Replicator</div>
                           <div>Document Process</div>
+                          <div>Sync Timeline</div>
+                          <div>Sync Gantt</div>
+                          <!-- Distribution -->
+                          <div>Pie Chart</div>
+                          <div>Top Types</div>
+                          <div>Treemap</div>
+                          <!-- Time-based -->
+                          <div>Stacked Bar</div>
+                          <div>Error Rate</div>
+                          <div>Heatmap</div>
+                          <!-- Other -->
                           <div>SQL++</div>
                         </div>
                         <div role='contents'>
+                            <!-- Sync / Replication -->
                             <div>
-                            <table class="mid-table" id="replicator-table">
+                            <table class="mid-table table table-zebra table-sm" id="replicator-table">
                                     <thead>
                                         <tr>
                                             <th>#</th>
@@ -75,32 +130,55 @@
                                     </table>
                             </div>
                             <div>
-                                  <table class="mid-table" id="replication-report-table">
+                                  <table class="mid-table table table-zebra table-sm" id="replication-report-table">
                                         <thead>
                                             <tr>
                                             <th>#</th>
                                             <th>Start</th>
                                             <th>processId</th>
-                                            <th>Docs Proccessed (<span id="docProcessHead">0</span>) <input type="checkbox" class="filter-check" data-col="3" > </th>
-                                            <th>Sync Write Reject (<span id="syncWriteRejectHead">0</span>)<input type="checkbox" class="filter-check" data-col="4" > </th>
+                                            <th>Docs Proccessed (<span id="docProcessHead">0</span>) <input type="checkbox" class="checkbox checkbox-sm filter-check" data-col="3" > </th>
+                                            <th>Sync Write Reject (<span id="syncWriteRejectHead">0</span>)<input type="checkbox" class="checkbox checkbox-sm filter-check" data-col="4" > </th>
                                             </tr>
                                         </thead>
                                         <tbody></tbody>              
                                     </table>  
                             </div>
                             <div>
+                                <div id="syncTimelineChart" style="width:100%;height:400px;"></div>
+                            </div>
+                            <div>
+                                <div id="syncGanttChart" style="width:100%;height:400px;"></div>
+                            </div>
+                            <!-- Distribution -->
+                            <div>
+                                <div id="pieChart" style="width:100%;height:400px;"></div>
+                            </div>
+                            <div>
+                                <div id="topNChart" style="width:100%;height:400px;"></div>
+                            </div>
+                            <div>
+                                <div id="treemapChart" style="width:100%;height:400px;"></div>
+                            </div>
+                            <!-- Time-based -->
+                            <div>
+                                <div id="stackedBarChart" style="width:100%;height:400px;"></div>
+                            </div>
+                            <div>
+                                <div id="errorRateChart" style="width:100%;height:400px;"></div>
+                            </div>
+                            <div id="heatmapContainer" style="width:100%;height:400px;">
+                            </div>
+                            <!-- Other -->
+                            <div>
                                Query HERE
                             </div>
                         </div>
                       </div>
-                </div>
-               <div class="pie-chart-container">
-                        <canvas id="pieChart"></canvas>
-                </div>
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <h3 style="margin: 0;">Raw Data: <span id="row-count"></span></h3>
-                <select name="limit" id="limit-select" style="width: 120px; padding: 5px;">
+                <button id="clear-stakes" class="btn btn-error btn-sm">Clear All Stakes</button>
+                <select name="limit" id="limit-select" class="select select-bordered select-sm" style="width: 120px;">
                     <option value="500" selected>LIMIT 500</option>
                     <option value="1000" >LIMIT 1000</option>
                     <option value="2000">LIMIT 2000</option>
@@ -109,10 +187,11 @@
                 </select>
             </div>
             <div class="table-container">
-                <table id="data-table">
+                <table id="data-table" class="table table-zebra table-pin-rows table-sm">
                     <thead>
                         <tr>
-                            <th>#</th>                            
+                            <th>#</th>
+                            <th>Stake</th>
                             <th>Type</th>
                             <th>Error</th>
                             <th>Raw Log</th>
@@ -128,6 +207,6 @@
     <!-- External JavaScript -->
     <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
     <script src="{{ url_for('static', filename='js/AddTabs.js') }}"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+
 </body>
 </html>

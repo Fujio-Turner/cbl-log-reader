@@ -1,63 +1,76 @@
-let lineChart, pieChart;
-let lineChartData = null; // Store line chart data
-let pieChartData = null; // Store pie chart data
+let lineChart, pieChart, topNChart, errorRateChart, stackedBarChart, treemapChart, syncTimelineChart, syncGanttChart, heatmapChart;
+let lineChartData = null;
+let pieChartData = null;
+let stakes = {};
+let stakeColorIndex = 0;
+const stakeColors = [
+    '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4',
+    '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990'
+];
 
 $(document).ready(function() {
-    // Initialize Flatpickr for date and time picking using native syntax
     flatpickr("#start-date", {
         enableTime: true,
-        enableSeconds: true, // Explicitly enable seconds
-        dateFormat: "Y-m-d H:i:S", // Use lowercase 's' for seconds
+        enableSeconds: true,
+        dateFormat: "Y-m-d H:i:S",
         time_24hr: true,
         allowInput: true,
         minuteIncrement: 1,
-        secondIncrement: 1
+        secondIncrement: 1,
+        onChange: function() { window.chartEpochMin = null; window.chartEpochMax = null; }
     });
 
     flatpickr("#end-date", {
         enableTime: true,
-        enableSeconds: true, // Explicitly enable seconds
-        dateFormat: "Y-m-d H:i:S", // Use lowercase 's' for seconds
+        enableSeconds: true,
+        dateFormat: "Y-m-d H:i:S",
         time_24hr: true,
         allowInput: true,
         minuteIncrement: 1,
-        secondIncrement: 1
+        secondIncrement: 1,
+        onChange: function() { window.chartEpochMin = null; window.chartEpochMax = null; }
     });
 
-        // Select All button click handler
-        $('#select-all').click(function(e) {
-            e.preventDefault();
-            $('#type-select option').prop('selected', true);
-        });
-    
-        // Unselect All button click handler
-        $('#unselect-all').click(function(e) {
-            e.preventDefault();
-            $('#type-select option').prop('selected', false);
-        });
+    $('#select-all').click(function(e) {
+        e.preventDefault();
+        $('#type-select option').prop('selected', true);
+    });
 
+    $('#unselect-all').click(function(e) {
+        e.preventDefault();
+        $('#type-select option').prop('selected', false);
+    });
+
+    // Window resize handler for all ECharts instances
+    window.addEventListener('resize', function() {
+        [lineChart, pieChart, topNChart, errorRateChart, stackedBarChart,
+         treemapChart, syncTimelineChart, syncGanttChart, heatmapChart]
+            .forEach(c => c && c.resize());
+    });
+
+    // Resize ECharts instances when their tab becomes visible
+    $(document).on('click', '.addui-Tabs-tab', function() {
+        setTimeout(function() {
+            [lineChart, pieChart, topNChart, errorRateChart, stackedBarChart,
+             treemapChart, syncTimelineChart, syncGanttChart, heatmapChart]
+                .forEach(c => c && c.resize());
+        }, 50);
+    });
 
     // Fetch types for filters first
     $.get('/get_types', function(types) {
         let select = $('#type-select');
-        // Add "Error" as a default option
-        select.append(
-            `<option value="Error" selected>Error</option>`
-        );
-        // Add the rest of the types from the server
+        select.append(`<option value="Error" selected>Error</option>`);
         types.forEach(function(type) {
-            select.append(
-                `<option value="${type}" selected>${type}</option>`
-            );
+            select.append(`<option value="${type}" selected>${type}</option>`);
         });
         console.log("Type select options after population:", $('#type-select').val());
 
-        // Now fetch the date range and call fetchData
         $.get('/get_date_range', function(dateRange) {
             console.log("Received date range:", dateRange);
             $('#start-date').val(dateRange.start_date + ' 00:00:00');
             $('#end-date').val(dateRange.end_date + ' 23:59:58');
-            fetchData(); // Fetch data after setting defaults
+            fetchData();
         }).fail(function() {
             console.error("Failed to fetch date range, using fallback.");
             $('#start-date').val('2023-01-01 00:00:00');
@@ -67,12 +80,9 @@ $(document).ready(function() {
     }).fail(function() {
         console.error("Failed to fetch types, proceeding with default 'Error' option.");
         let select = $('#type-select');
-        select.append(
-            `<option value="Error" selected>Error</option>`
-        );
+        select.append(`<option value="Error" selected>Error</option>`);
         console.log("Type select options after population (fallback):", $('#type-select').val());
 
-        // Proceed to fetch date range even if types fail
         $.get('/get_date_range', function(dateRange) {
             console.log("Received date range:", dateRange);
             $('#start-date').val(dateRange.start_date + ' 00:00:00');
@@ -89,20 +99,39 @@ $(document).ready(function() {
 });
 
 
-    // Function to fetch data from the server
+    function filterLogReportByDateRange(logReportData, startDate, endDate) {
+        if (!startDate || !endDate) return logReportData;
+        let startMs = new Date(startDate.replace(' ', 'T')).getTime();
+        let endMs = new Date(endDate.replace(' ', 'T')).getTime();
+        if (isNaN(startMs) || isNaN(endMs)) return logReportData;
+
+        let filtered = {};
+        // Copy non-array properties as-is
+        for (let key in logReportData) {
+            if (!Array.isArray(logReportData[key])) {
+                filtered[key] = logReportData[key];
+                continue;
+            }
+            filtered[key] = logReportData[key].filter(entry => {
+                if (!entry.startTime) return false;
+                let t = new Date(entry.startTime).getTime();
+                return t >= startMs && t <= endMs;
+            });
+        }
+        return filtered;
+    }
+
     function fetchData() {
-        // Get the selected values (returns array or empty array if nothing selected)
         let selectedTypes = $('#type-select').val() || [];
         let selectedTypeResult = ($('#type-select').val() || []).length === $('#type-select option').length;
         let startDate = $('#start-date').val();
         let endDate = $('#end-date').val();
         let searchTerm = $('#search-input').val().trim();
-        let useSpecificType = $('input[name="type-mode"]:checked').val() === 'specific';
-        let groupingMode = $('input[name="grouping-mode"]:checked').val() || 'by-second';
+        let useSpecificType = $('#type-mode-toggle').is(':checked');
+        let groupingMode = $('#grouping-mode-toggle').is(':checked') ? 'by-minute' : 'by-second';
         let errorFilter = selectedTypes.includes('Error');
-        //let typeFilters = errorFilter ? [] : selectedTypes.filter(t => t !== 'Error');
         let limit = $('#limit-select').val();
-    
+
         let filters = {
             use_specific_type: useSpecificType,
             grouping_mode: groupingMode,
@@ -114,8 +143,23 @@ $(document).ready(function() {
         };
         if (startDate) filters.start_date = startDate;
         if (endDate) filters.end_date = endDate;
+        if (window.chartEpochMin && window.chartEpochMax) {
+            filters.start_epoch = window.chartEpochMin;
+            filters.end_epoch = window.chartEpochMax;
+        }
 
-        // Fetch aggregated data for the line chart
+        console.log("fetchData filters:", JSON.stringify(filters, null, 2));
+
+        $.ajax({
+            url: '/debug_query',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(filters),
+            success: function(resp) {
+                console.log("DEBUG FTS query:", JSON.stringify(resp.fts_query, null, 2));
+            }
+        });
+
         $.ajax({
             url: '/get_chart_data',
             type: 'POST',
@@ -124,32 +168,35 @@ $(document).ready(function() {
             success: function(chartData) {
                 lineChartData = chartData;
                 updateLineChart(chartData.data, errorFilter);
+                updateErrorRateChart(chartData.data);
+                updateStackedBarChart(chartData.data);
+                updateHeatmap(chartData.data);
             },
             error: function() {
                 alert('Error fetching line chart data');
             }
         });
 
-        // Fetch data for the pie chart
         $.ajax({
             url: '/get_pie_data',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ 
-                start_date: filters.start_date, 
+            data: JSON.stringify({
+                start_date: filters.start_date,
                 end_date: filters.end_date,
-                search_term: searchTerm // Include the search term in the pie chart request
+                search_term: searchTerm
             }),
             success: function(pieData) {
                 pieChartData = pieData;
                 updatePieChart(pieData.data);
+                updateTopNChart(pieData.data);
+                updateTreemapChart(pieData.data);
             },
             error: function() {
                 alert('Error fetching pie chart data');
             }
         });
 
-        // Fetch raw data for the table
         $.ajax({
             url: '/get_raw_data',
             type: 'POST',
@@ -163,59 +210,49 @@ $(document).ready(function() {
             }
          });
 
-
-
-        // Fetch log_report Doc
         $.ajax({
             url: '/get_log_report',
             type: 'GET',
             dataType: 'json',
             success: function(logReportData) {
-                updateReplicationHistory(logReportData);
+                // Filter log_report data by current date range
+                let filteredReport = filterLogReportByDateRange(logReportData, startDate, endDate);
+                updateReplicationHistory(filteredReport);
+                updateSyncTimeline(filteredReport);
+                updateSyncGantt(filteredReport);
             },
             error: function() {
                 alert('Error fetching raw data');
             }
         });
-
-
     }
 
     function updateReplicationHistory(logReportData) {
-        // Target the table body
         let tableBody = document.querySelector('#replication-report-table tbody');
         if (!tableBody) {
             console.error('Table body not found!');
             return;
         }
-        tableBody.innerHTML = ''; // Clear existing rows
-      
-        // Ensure replicationStats exists and is an array
+        tableBody.innerHTML = '';
+
         const replicationStats = logReportData?.["replicationStats"] || [];
-      
-        // Sort by startTime (optional, remove if not needed)
         const sortedStats = [...replicationStats].sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-      
+
         var totalDocsProcess = 0;
         var totalDocsReject = 0;
-        var totalEndpoint = 0;  // This will count valid endpoints
-      
+        var totalEndpoint = 0;
+
         sortedStats.forEach((entry, index) => {
-            // Format documentsProcessedCount and localWriteRejectionCount
             const docCount = entry.documentsProcessedCount || 0;
             const rejectCount = entry.localWriteRejectionCount || 0;
             const docCountHtml = docCount > 0 ? `<strong style="color: green;">${docCount}</strong>` : docCount;
             const rejectCountHtml = rejectCount > 0 ? `<strong style="color: red;">${rejectCount}</strong>` : rejectCount;
-            
-            // Check if endpoint exists first, then apply formatting
             const endpoint = entry.endpoint ? `<strong style="color: green;">${entry.endpoint}</strong>` : '';
-            
-            // Increment counters
+
             totalDocsProcess += docCount;
             totalDocsReject += rejectCount;
-            // Increment totalEndpoint only if endpoint exists and is not empty
             totalEndpoint += (entry.endpoint && entry.endpoint.trim() !== '') ? 1 : 0;
-    
+
             var datepicker = entry.startTime.replace('T', ' ').slice(0, 19);
             tableBody.insertAdjacentHTML('beforeend', `
                 <tr>
@@ -228,12 +265,11 @@ $(document).ready(function() {
                 </tr>
             `);
         });
-        
+
         $("#docProcessHead").html(totalDocsProcess);
         $("#syncWriteRejectHead").html(totalDocsReject);
         $("#endpointHead").html(totalEndpoint);
 
-        // Replicator the table body
         let table2Body = document.querySelector('#replicator-table tbody');
         if (!table2Body) {
             console.error('Table body not found!');
@@ -247,7 +283,6 @@ $(document).ready(function() {
         sortedReplicator.forEach((entry, index) => {
 
             var datepicker2 = entry.startTime.replace('T', ' ').slice(0, 19);
-            // Check if endpoint exists first, then apply formatting
 
             var more = ""
             if (entry.endpoint.type === "url") {
@@ -275,237 +310,154 @@ $(document).ready(function() {
     }
 
 function clickProcessId(processId,more="") {
-    var processIdFts = "+processId:" + processId.toString() + more;  // Fixed toString() capitalization and concatenation
+    var processIdFts = "+processId:" + processId.toString() + more;
     $('#search-input').val(processIdFts)
 }
 
+// ─── Main Line Chart (ECharts) ───
 function updateLineChart(data, errorFilter) {
-    if (!data) {
+    if (!data || data.length === 0) {
         console.log("No data to display for line chart");
         return;
     }
 
-    console.log("Raw data received:", data);
-
-    // Group data by type
     let datasets = {};
     data.forEach(function(item) {
-        if (!item.second || !item.type || typeof item.count !== 'number') {
-            console.warn("Skipping invalid data point:", item);
-            return;
-        }
+        if (!item.second || !item.type || typeof item.count !== 'number') return;
         let type = item.type;
-        if (!datasets[type]) {
-            datasets[type] = [];
-        }
-        datasets[type].push({ x: item.second, y: item.count });
+        if (!datasets[type]) datasets[type] = [];
+        datasets[type].push([item.second, item.count]);
     });
 
-    let chartDatasets = [];
-    for (let type in datasets) {
-        datasets[type].sort((a, b) => moment(a.x).diff(moment(b.x)));
+    let series = Object.keys(datasets).map(type => {
         let group = type.split(':')[0];
         let specificTypes = Object.keys(datasets).filter(t => t.startsWith(group));
-        let borderColor = getTypeColor(type, errorFilter, specificTypes);
-        chartDatasets.push({
-            label: type,
-            data: datasets[type],
-            borderColor: borderColor,
-            fill: false
+        return {
+            name: type,
+            type: 'line',
+            data: datasets[type].sort((a, b) => a[0].localeCompare(b[0])),
+            smooth: 0.1,
+            showSymbol: false,
+            itemStyle: { color: getTypeColor(type, errorFilter, specificTypes) },
+            markLine: { data: [] }
+        };
+    });
+
+    // Re-apply existing stakes as markLine on the first series
+    if (series.length > 0 && Object.keys(stakes).length > 0) {
+        let markData = [];
+        Object.keys(stakes).forEach(stakeId => {
+            let s = stakes[stakeId];
+            markData.push({
+                name: '#' + (s.rowIndex + 1),
+                xAxis: s.timestamp,
+                lineStyle: { color: s.color, type: 'dashed', width: 2 },
+                label: { show: true, formatter: '#' + (s.rowIndex + 1), color: '#fff',
+                         backgroundColor: s.color, padding: [2, 4], borderRadius: 2 },
+                _stakeId: stakeId
+            });
         });
+        series[0].markLine = { silent: false, symbol: 'none', data: markData };
     }
 
-    console.log("New chart datasets:", chartDatasets);
+    let scaleType = $('#scale-mode-toggle').is(':checked') ? 'log' : 'value';
 
-    let yValues = chartDatasets.flatMap(dataset => dataset.data.map(point => point.y)).filter(y => typeof y === 'number');
-    console.log("Y-axis values from new data:", yValues);
-
-    let scaleType = $('input[name="scale-mode"]:checked').val();
-    console.log("Updating chart with scale type:", scaleType);
-
-    if (lineChart) {
-        lineChart.data.datasets = chartDatasets;
-        lineChart.options.scales.y.type = scaleType;
-        lineChart.options.scales.y.min = 0; 
-        lineChart.update('none');
-        console.log("Chart updated with new datasets:", lineChart.data.datasets);
-    } else {
-        let ctx = document.getElementById('lineChart').getContext('2d');
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-        lineChart = new Chart(ctx, {
-            type: 'line',
-            data: { datasets: chartDatasets },
-            options: {
-                tension: 0.1,
-                fill: false,
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    x: {
-                        type: 'time',
-                        title: {
-                            display: true,
-                            text: 'Time'
-                        }
-                    },
-                    y: {
-                        type: scaleType,
-                        beginAtZero: true,
-                        min:0,
-                        title: {
-                            display: true,
-                            text: '# of Logs of a Type'
-                        },
-                        ticks: {
-                            min: yValues.length ? Math.min(...yValues) : 0,
-                            max: yValues.length ? Math.max(...yValues) : 1,
-                            stepSize: yValues.length ? Math.ceil((Math.max(...yValues) - Math.min(...yValues)) / 10) : 1,
-                            callback: function(value) {
-                                return value;
-                            }
-                        }
+    if (!lineChart) lineChart = echarts.init(document.getElementById('lineChart'));
+    lineChart.setOption({
+        tooltip: { trigger: 'axis' },
+        legend: { type: 'scroll', top: 0 },
+        grid: { left: 60, right: 30, top: 50, bottom: 80 },
+        xAxis: { type: 'time', name: 'Time' },
+        yAxis: { type: scaleType, name: '# of Logs', min: scaleType === 'log' ? 1 : 0 },
+        dataZoom: [
+            { type: 'slider', xAxisIndex: 0, bottom: 10 },
+            { type: 'inside', xAxisIndex: 0 }
+        ],
+        toolbox: {
+            feature: {
+                dataZoom: {
+                    yAxisIndex: 'none',
+                    brushStyle: {
+                        color: 'rgba(255, 255, 0, 0.2)',
+                        borderColor: '#888',
+                        borderWidth: 1
                     }
                 },
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'top'
-                    },
-                    zoom: {
-                        pan: {
-                            enabled: true, // Enable panning
-                            mode: 'xy', // Allow panning in both x and y directions
-                        },
-                        zoom: {
-                            wheel: {
-                                enabled: true, // Enable zooming with mouse wheel
-                            },
-                            pinch: {
-                                enabled: true, // Enable zooming with pinch gestures
-                            },
-                            drag: {
-                                enabled: true, // Enable rectangular drag-to-zoom
-                                backgroundColor: 'rgba(0, 0, 255, 0.3)', // Light blue fill for the zoom box
-                                borderColor: 'rgba(0, 0, 255, 1)', // Blue border for the zoom box
-                                borderWidth: 1
-                            },
-                            mode: 'xy', // Zoom in both x and y directions
-                        }
-                    }
-                }
+                restore: {},
+                saveAsImage: {}
             }
-        });
-        console.log("New chart created with datasets:", lineChart.data.datasets);
-    }
+        },
+        series: series
+    }, true);
 
-    // Add reset button event listener (only once when chart is created)
-    if (!lineChart.resetListenerAdded) {
-        $('#zoom-reset').click(function() {
-            if (lineChart) {
-                lineChart.resetZoom(); // Reset the zoom and pan to the initial state
-                console.log("Zoom reset triggered");
-            }
-        });
-        lineChart.resetListenerAdded = true; // Flag to prevent multiple listeners
-    }
+    // Auto-activate rectangular drag-to-zoom (like Chart.js drag zoom)
+    lineChart.dispatchAction({
+        type: 'takeGlobalCursor',
+        key: 'dataZoomSelect',
+        dataZoomSelectActive: true
+    });
 }
 
-    
-    // Function to update the pie chart
-// Function to update the pie chart
+// ─── Pie Chart (ECharts) ───
 function updatePieChart(data) {
     if (!data || !Array.isArray(data) || data.length === 0) {
         console.log("No valid data to display for pie chart");
         return;
     }
 
-    let ctx = document.getElementById('pieChart').getContext('2d');
-    // Set canvas dimensions for high-DPI displays
-    const canvas = document.getElementById('pieChart');
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = canvas.clientWidth * dpr;
-    canvas.height = canvas.clientHeight * dpr;
-    ctx.scale(dpr, dpr);
-
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-    if (pieChart) {
-        pieChart.destroy();
-        pieChart = null;
-    }
-
-    // Filter and map data with fallback values
-    let labels = data.map(item => item && item.type_prefix ? item.type_prefix : 'Unknown');
-    let counts = data.map(item => item && item.count !== undefined ? item.count : 0);
-    let backgroundColors = labels.map(label => getTypeColor(label, false, [], true));
-
-    pieChart = new Chart(ctx, {
-        type: 'pie',
-        data: {
-            labels: labels,
-            datasets: [{
-                data: counts,
-                backgroundColor: backgroundColors
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'right'
-                }
-            },
-            title: {
-                display: true,
-                text: 'Type Distribution'
-            }
-        }
-    });
+    if (!pieChart) pieChart = echarts.init(document.getElementById('pieChart'));
+    pieChart.setOption({
+        tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+        legend: { type: 'scroll', orient: 'vertical', right: 10, top: 20 },
+        series: [{
+            type: 'pie',
+            radius: ['30%', '70%'],
+            data: data.map(d => ({
+                name: d.type_prefix || 'Unknown',
+                value: d.count || 0,
+                itemStyle: { color: getTypeColor(d.type_prefix, false, [], true) }
+            })),
+            emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' } }
+        }]
+    }, true);
 }
 
-    // Helper function to assign consistent colors based on type
     function getTypeColor(type, errorFilter, specificTypes = [], forPieChart = false) {
-        // If the type is "Error" and errorFilter is true, always use black
+        if (!type) return '#A9A9A9';
         if (errorFilter && type === 'Error') {
             return '#000000';
         }
 
-        // Define base colors for each type group
         const colorMap = {
-            'Sync': { base: '#1E90FF', shades: ['#1E90FF', '#4AA8FF', '#76C0FF', '#A2D8FF'] }, // DodgerBlue shades
-            'SQL': { base: '#32CD32', shades: ['#32CD32', '#5DE65D', '#88FF88', '#B3FFB3'] }, // LimeGreen shades
-            'BLIP': { base: '#FF4500', shades: ['#FF4500', '#FF6A33', '#FF8F66', '#FFB499'] }, // OrangeRed shades
-            'BLIPMessages': { base: '#FF6347', shades: ['#FF6347', '#FF826B', '#FFA18F', '#FFC0B3'] }, // Tomato shades
-            'CBL': { base: '#FFD700', shades: ['#FFD700', '#FFDE33', '#FFE566', '#FFEC99'] }, // Gold shades
-            'Changes': { base: '#9400D3', shades: ['#9400D3', '#A933E6', '#BE66F9', '#D399FF'] }, // DarkViolet shades
-            'DB': { base: '#00CED1', shades: ['#00CED1', '#33DCE0', '#66EAEF', '#99F8FE'] }, // DarkTurquoise shades
-            'Other': { base: '#A9A9A9', shades: ['#A9A9A9', '#B8B8B8', '#C7C7C7', '#D6D6D6'] }, // DarkGray shades
-            'Query': { base: '#228B22', shades: ['#228B22', '#4BA04B', '#74B574', '#9DCA9D'] }, // ForestGreen shades
-            'WS': { base: '#FF69B4', shades: ['#FF69B4', '#FF88C3', '#FFA7D2', '#FFC6E1'] }, // HotPink shades
-            'Zip': { base: '#8A2BE2', shades: ['#8A2BE2', '#A154EB', '#B87DF4', '#CFA6FD'] }, // BlueViolet shades
-            'Actor': { base: '#DC143C', shades: ['#DC143C', '#E43F5E', '#EC6A80', '#F495A2'] } // Crimson shades
+            'Sync': { base: '#1E90FF', shades: ['#1E90FF', '#4AA8FF', '#76C0FF', '#A2D8FF'] },
+            'SQL': { base: '#32CD32', shades: ['#32CD32', '#5DE65D', '#88FF88', '#B3FFB3'] },
+            'BLIP': { base: '#FF4500', shades: ['#FF4500', '#FF6A33', '#FF8F66', '#FFB499'] },
+            'BLIPMessages': { base: '#FF6347', shades: ['#FF6347', '#FF826B', '#FFA18F', '#FFC0B3'] },
+            'CBL': { base: '#FFD700', shades: ['#FFD700', '#FFDE33', '#FFE566', '#FFEC99'] },
+            'Changes': { base: '#9400D3', shades: ['#9400D3', '#A933E6', '#BE66F9', '#D399FF'] },
+            'DB': { base: '#00CED1', shades: ['#00CED1', '#33DCE0', '#66EAEF', '#99F8FE'] },
+            'Other': { base: '#A9A9A9', shades: ['#A9A9A9', '#B8B8B8', '#C7C7C7', '#D6D6D6'] },
+            'Query': { base: '#228B22', shades: ['#228B22', '#4BA04B', '#74B574', '#9DCA9D'] },
+            'WS': { base: '#FF69B4', shades: ['#FF69B4', '#FF88C3', '#FFA7D2', '#FFC6E1'] },
+            'Zip': { base: '#8A2BE2', shades: ['#8A2BE2', '#A154EB', '#B87DF4', '#CFA6FD'] },
+            'Actor': { base: '#DC143C', shades: ['#DC143C', '#E43F5E', '#EC6A80', '#F495A2'] }
         };
 
-        // For pie chart, use the base color
         if (forPieChart) {
             for (let group in colorMap) {
                 if (type.startsWith(group)) {
                     return colorMap[group].base;
                 }
             }
-            return '#A9A9A9'; // Default to DarkGray for unknown types
+            return '#A9A9A9';
         }
 
-        // For line chart, assign shades based on the specific type
         let group = 'Other';
         let shadeIndex = 0;
 
         for (let key in colorMap) {
             if (type.startsWith(key)) {
                 group = key;
-                // Calculate shade index based on the specific type (e.g., Sync:Rejection, Sync:Start)
                 shadeIndex = specificTypes.indexOf(type) % colorMap[key].shades.length;
                 break;
             }
@@ -516,19 +468,21 @@ function updatePieChart(data) {
 
     function updateTable(data, searchTerm) {
         let tableBody = document.querySelector('#data-table tbody');
-        tableBody.innerHTML = ''; // Clear existing rows (resets the table)
+        tableBody.innerHTML = '';
 
         console.log('Data received in updateTable:', data);
-        
+
         if (!searchTerm || searchTerm.trim() === '') {
-            // No search term, display as is
             data.forEach((row, index) => {
                 let errorValue = row.error ? 'True' : '';
                 let errorClass = row.error ? 'error-true' : '';
-        
+                let timestamp = extractTimestamp(row.rawLog || '');
+                let stakeId = 'stake-' + index;
+
                 tableBody.insertAdjacentHTML('beforeend', `
-                <tr>
+                <tr id="row-${index}" data-timestamp="${timestamp}">
                     <td>${index + 1}</td>
+                    <td><button class="stake-btn" data-stake-id="${stakeId}" data-row-index="${index}" data-timestamp="${timestamp}" style="padding:2px 8px;cursor:pointer;">📍</button></td>
                     <td>${row.type || ''}</td>
                     <td class="${errorClass}">${errorValue}</td>
                     <td>${row.rawLog || ''}</td>
@@ -537,49 +491,41 @@ function updatePieChart(data) {
                 `);
             });
         } else {
-            // Split the search term by operators and clean up
             const operators = /\s+(AND|OR|NOT)\s+/gi;
             let terms = searchTerm.split(operators)
                 .filter(term => !['AND', 'OR', 'NOT'].includes(term.trim().toUpperCase()))
                 .map(term => term.trim())
                 .filter(term => term.length > 0);
-        
-            // Process terms to remove prefixes like +processId: or +processed:
+
             const cleanedTerms = terms.map(term => {
-                // Remove +processId: or +processed: followed by value
                 return term.replace(/^\+?(processId|rawLog|type|dt):/i, '');
             });
-        
-            // Create regex patterns for each cleaned term
+
             const regexPatterns = cleanedTerms.map(term => {
-                // Remove boost (^n)
                 term = term.replace(/\^\d+$/, '');
-                
-                // Convert wildcard * to regex .*
                 let pattern = term.replace(/\*/g, '.*');
-                
-                // Escape special regex characters (except *)
                 pattern = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-                
                 return new RegExp(pattern, 'gi');
             });
-        
+
             data.forEach((row, index) => {
                 let errorValue = row.error ? 'True' : '';
                 let errorClass = row.error ? 'error-true' : '';
                 let rawLogContent = row.rawLog || '';
-                
-                // Apply highlighting for each term
+                let timestamp = extractTimestamp(rawLogContent);
+                let stakeId = 'stake-' + index;
+
                 let highlightedRawLog = rawLogContent;
                 regexPatterns.forEach(regex => {
-                    highlightedRawLog = highlightedRawLog.replace(regex, match => 
+                    highlightedRawLog = highlightedRawLog.replace(regex, match =>
                         `<span style="background-color: yellow">${match}</span>`
                     );
                 });
-        
+
                 tableBody.insertAdjacentHTML('beforeend', `
-                <tr>
+                <tr id="row-${index}" data-timestamp="${timestamp}">
                     <td>${index + 1}</td>
+                    <td><button class="stake-btn" data-stake-id="${stakeId}" data-row-index="${index}" data-timestamp="${timestamp}" style="padding:2px 8px;cursor:pointer;">📍</button></td>
                     <td>${row.type || ''}</td>
                     <td class="${errorClass}">${errorValue}</td>
                     <td>${highlightedRawLog}</td>
@@ -588,32 +534,160 @@ function updatePieChart(data) {
                 `);
             });
         }
-        
-        // Update the row count
+
         document.getElementById('row-count').textContent = `(${data.length} rows)`;
     }
 
+    function extractTimestamp(rawLog) {
+        let match = rawLog.match(/^(\d{2}:\d{2}:\d{2}\.\d+)/);
+        if (match) return match[1];
+        match = rawLog.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)/);
+        if (match) return match[1];
+        return '';
+    }
 
+    // ─── Stakes (ECharts markLine) ───
+    function addStakeToChart(chart, stakeId, timeValue, color, rowIndex) {
+        if (!chart) return;
+        let option = chart.getOption();
+        if (!option.series || !option.series.length) return;
 
+        let markData = (option.series[0].markLine && option.series[0].markLine.data) || [];
+        markData.push({
+            name: '#' + (rowIndex + 1),
+            xAxis: timeValue,
+            lineStyle: { color: color, type: 'dashed', width: 2 },
+            label: { show: true, formatter: '#' + (rowIndex + 1), color: '#fff',
+                     backgroundColor: color, padding: [2, 4], borderRadius: 2 },
+            _stakeId: stakeId
+        });
+        chart.setOption({ series: [{ markLine: { silent: false, symbol: 'none', data: markData } }] });
+    }
 
-    // Apply filters on button click, radio change, date change, or search input change
-    $('#apply-filters').click(fetchData);
-   // $('input[name="type-mode"]').change(fetchData);
-    //$('input[name="grouping-mode"]').change(fetchData);
-    //$("#start-date, #end-date").on("change", fetchData);
-    //$("#search-input").on("input", fetchData);
+    function removeStakeFromChart(chart, stakeId) {
+        if (!chart) return;
+        let option = chart.getOption();
+        if (!option.series || !option.series.length) return;
 
-    // Update chart scale without re-fetching data
-    $('input[name="scale-mode"]').change(function() {
-        if (lineChartData) {
-            updateLineChart(lineChartData, $('#type-select').val().includes('Error'));
+        let markData = ((option.series[0].markLine && option.series[0].markLine.data) || []).filter(d => d._stakeId !== stakeId);
+        chart.setOption({ series: [{ markLine: { data: markData } }] });
+    }
+
+    function addStake(stakeId, timestamp, rowIndex, color) {
+        if (!lineChart || !timestamp) return;
+        let timeValue = timestamp;
+        if (/^\d{2}:\d{2}:\d{2}/.test(timestamp)) {
+            let startDate = $('#start-date').val().split(' ')[0] || '2026-01-01';
+            timeValue = startDate + ' ' + timestamp;
+        }
+        stakes[stakeId] = { color: color, timestamp: timeValue, rowIndex: rowIndex };
+        addStakeToChart(lineChart, stakeId, timeValue, color, rowIndex);
+        addStakeToChart(errorRateChart, stakeId, timeValue, color, rowIndex);
+    }
+
+    function removeStake(stakeId) {
+        if (!lineChart) return;
+        let stake = stakes[stakeId];
+        if (stake) {
+            let row = document.getElementById('row-' + stake.rowIndex);
+            if (row) {
+                row.style.backgroundColor = '';
+                let btn = row.querySelector('.stake-btn');
+                if (btn) {
+                    btn.textContent = '📍';
+                    btn.style.backgroundColor = '';
+                }
+            }
+        }
+        delete stakes[stakeId];
+        removeStakeFromChart(lineChart, stakeId);
+        removeStakeFromChart(errorRateChart, stakeId);
+    }
+
+    $(document).on('click', '.stake-btn', function() {
+        let btn = $(this);
+        let stakeId = btn.data('stake-id');
+        let rowIndex = btn.data('row-index');
+        let timestamp = btn.data('timestamp');
+        if (stakes[stakeId]) {
+            removeStake(stakeId);
+        } else {
+            let color = stakeColors[stakeColorIndex % stakeColors.length];
+            stakeColorIndex++;
+            addStake(stakeId, timestamp, rowIndex, color);
+            let row = document.getElementById('row-' + rowIndex);
+            if (row) {
+                row.style.backgroundColor = color + '22';
+                btn[0].textContent = '❌';
+                btn[0].style.backgroundColor = color;
+                btn[0].style.color = '#fff';
+                btn[0].style.borderRadius = '4px';
+                btn[0].style.border = 'none';
+            }
         }
     });
 
+    $('#clear-stakes').click(function() {
+        Object.keys(stakes).forEach(stakeId => removeStake(stakeId));
+        stakes = {};
+        stakeColorIndex = 0;
+    });
+
+    // Apply filters on button click or search enter
+    $('#apply-filters').click(fetchData);
+$('#search-input').keypress(function(e) {
+    if (e.which === 13) {
+        e.preventDefault();
+        fetchData();
+    }
+});
+$('#reset-filters').click(function() {
+    $('#search-input').val('');
+    $('#type-mode-toggle').prop('checked', false);
+    $('#grouping-mode-toggle').prop('checked', false);
+    $('#type-select option').prop('selected', true);
+    $('#limit-select').val('500');
+    window.chartEpochMin = null;
+    window.chartEpochMax = null;
+    $.get('/get_date_range', function(dateRange) {
+        let startFp = document.querySelector('#start-date')._flatpickr;
+        let endFp = document.querySelector('#end-date')._flatpickr;
+        startFp.setDate(dateRange.start_date + ' 00:00:00', false);
+        endFp.setDate(dateRange.end_date + ' 23:59:58', false);
+        fetchData();
+    });
+});
+
+    // Grouping toggle — re-fetch data when switching seconds ↔ minutes
+    $('#grouping-mode-toggle').change(fetchData);
+
+    // Scale toggle — update line chart y-axis without re-fetching
+    $('#scale-mode-toggle').change(function() {
+        if (lineChart) {
+            let type = $(this).is(':checked') ? 'log' : 'value';
+            lineChart.setOption({ yAxis: { type: type, min: type === 'log' ? 1 : 0 } });
+        }
+    });
+
+    // Use Chart's X-Axis Values button
+    $('#use-chart-range').click(function() {
+        if (!lineChart) return;
+        let model = lineChart.getModel();
+        let axis = model.getComponent('xAxis', 0).axis;
+        let extent = axis.scale.getExtent();
+        let min = extent[0];
+        let max = extent[1];
+        window.chartEpochMin = min / 1000 - 1;
+        window.chartEpochMax = max / 1000 + 1;
+        let startFp = document.querySelector('#start-date')._flatpickr;
+        let endFp = document.querySelector('#end-date')._flatpickr;
+        startFp.setDate(new Date(min), false);
+        endFp.setDate(new Date(max), false);
+    });
 
 
         const checkboxes = document.querySelectorAll('.filter-check');
-        
+
         function filterRows() {
             const table = document.getElementById('replication-report-table');
             const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
@@ -625,7 +699,6 @@ function updatePieChart(data) {
                 const cells = row.getElementsByTagName('td');
                 let shouldHide = false;
 
-                // If no checkboxes are checked, show all rows
                 if (checkedCols.length === 0) {
                     row.classList.remove('hidden');
                     return;
@@ -633,18 +706,18 @@ function updatePieChart(data) {
 
                 checkedCols.forEach(colIdx => {
                     const cellValue = cells[colIdx].textContent.trim();
-                    
-                    if (colIdx === 3 || colIdx === 4) { // Columns 4 and 5 (integer columns)
+
+                    if (colIdx === 3 || colIdx === 4) {
                         if (cellValue === '') {
-                            shouldHide = true; // Empty cells should hide
+                            shouldHide = true;
                         } else {
                             const numValue = parseInt(cellValue);
                             if (numValue === 0) {
-                                shouldHide = true; // 0 should hide
+                                shouldHide = true;
                             } else if (numValue > 0) {
-                                shouldHide = false; // > 0 should show (but won't override other conditions)
+                                shouldHide = false;
                             } else {
-                                shouldHide = true; // < 0 should hide
+                                shouldHide = true;
                             }
                         }
                     }
@@ -658,10 +731,405 @@ function updatePieChart(data) {
             });
         }
 
-        // Add event listeners to all checkboxes
         checkboxes.forEach(checkbox => {
             checkbox.addEventListener('change', filterRows);
         });
 
-        // Initial filter
         filterRows();
+
+// ─── Top-N Horizontal Bar Chart (ECharts) ───
+function updateTopNChart(data) {
+    if (!data || !Array.isArray(data) || data.length === 0) {
+        console.log("No data for Top-N chart");
+        return;
+    }
+
+    let sorted = [...data]
+        .filter(d => d && d.type_prefix && typeof d.count === 'number')
+        .sort((a, b) => a.count - b.count)
+        .slice(-15);
+
+    if (!topNChart) topNChart = echarts.init(document.getElementById('topNChart'));
+    topNChart.setOption({
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        grid: { left: 150, right: 30, top: 30, bottom: 30 },
+        xAxis: { type: 'value', name: 'Count' },
+        yAxis: { type: 'category', data: sorted.map(d => d.type_prefix) },
+        series: [{
+            type: 'bar',
+            data: sorted.map(d => ({
+                value: d.count,
+                itemStyle: { color: getTypeColor(d.type_prefix, false, [], true) }
+            }))
+        }]
+    }, true);
+}
+
+// ─── Error Rate Timeline (ECharts dual axis) ───
+function updateErrorRateChart(data) {
+    if (!data || !Array.isArray(data) || data.length === 0) {
+        console.log("No data for Error Rate chart");
+        return;
+    }
+
+    let buckets = {};
+    data.forEach(item => {
+        if (!item.second) return;
+        if (!buckets[item.second]) buckets[item.second] = { total: 0, errors: 0 };
+        buckets[item.second].total += item.count || 0;
+        if (item.type === 'Error') buckets[item.second].errors += item.count || 0;
+    });
+
+    let times = Object.keys(buckets).sort();
+    let rateData = times.map(t => [t, buckets[t].total > 0 ?
+        Math.round((buckets[t].errors / buckets[t].total) * 10000) / 100 : 0]);
+    let totalData = times.map(t => [t, buckets[t].total]);
+    let errorData = times.map(t => [t, buckets[t].errors]);
+
+    if (!errorRateChart) errorRateChart = echarts.init(document.getElementById('errorRateChart'));
+
+    let option = {
+        tooltip: { trigger: 'axis' },
+        legend: { top: 0 },
+        grid: { left: 60, right: 60, top: 50, bottom: 60 },
+        xAxis: { type: 'time', axisLabel: { rotate: 30 } },
+        yAxis: [
+            { type: 'value', name: 'Error Rate (%)', max: 100,
+              axisLabel: { formatter: '{value}%' } },
+            { type: 'value', name: 'Count', position: 'right' }
+        ],
+        series: [
+            { name: 'Error Rate %', type: 'line', data: rateData, yAxisIndex: 0,
+              areaStyle: { opacity: 0.1 }, itemStyle: { color: '#DC143C' }, smooth: 0.2 },
+            { name: 'Total Logs', type: 'line', data: totalData, yAxisIndex: 1,
+              lineStyle: { type: 'dashed' }, itemStyle: { color: '#1E90FF' }, smooth: 0.2, showSymbol: false },
+            { name: 'Error Count', type: 'line', data: errorData, yAxisIndex: 1,
+              itemStyle: { color: '#000' }, smooth: 0.2, showSymbol: false }
+        ]
+    };
+
+    // Re-apply existing stakes as markLine on the first series
+    if (Object.keys(stakes).length > 0) {
+        let markData = [];
+        Object.keys(stakes).forEach(stakeId => {
+            let s = stakes[stakeId];
+            markData.push({
+                name: '#' + (s.rowIndex + 1),
+                xAxis: s.timestamp,
+                lineStyle: { color: s.color, type: 'dashed', width: 2 },
+                label: { show: true, formatter: '#' + (s.rowIndex + 1), color: '#fff',
+                         backgroundColor: s.color, padding: [2, 4], borderRadius: 2 },
+                _stakeId: stakeId
+            });
+        });
+        option.series[0].markLine = { silent: false, symbol: 'none', data: markData };
+    }
+
+    errorRateChart.setOption(option, true);
+}
+
+// ─── Heatmap (ECharts native) ───
+function updateHeatmap(data) {
+    let container = document.getElementById('heatmapContainer');
+    if (!container) return;
+    if (!data || !Array.isArray(data) || data.length === 0) {
+        container.innerHTML = '<p style="padding:20px;text-align:center;color:#888;">No data for heatmap</p>';
+        return;
+    }
+
+    let grid = {};
+    let days = new Set();
+    data.forEach(item => {
+        if (!item.second) return;
+        let parts = item.second.split(' ');
+        if (parts.length < 2) return;
+        let day = parts[0];
+        let hour = parseInt(parts[1].split(':')[0], 10);
+        days.add(day);
+        if (!grid[day]) grid[day] = {};
+        grid[day][hour] = (grid[day][hour] || 0) + (item.count || 0);
+    });
+
+    let sortedDays = [...days].sort();
+    if (sortedDays.length === 0) {
+        container.innerHTML = '<p style="padding:20px;text-align:center;color:#888;">No data for heatmap</p>';
+        return;
+    }
+
+    let hours = Array.from({length: 24}, (_, i) => i.toString().padStart(2, '0'));
+    let heatData = [];
+    let maxVal = 0;
+    sortedDays.forEach((day, di) => {
+        for (let h = 0; h < 24; h++) {
+            let v = (grid[day] && grid[day][h]) || 0;
+            heatData.push([h, di, v]);
+            if (v > maxVal) maxVal = v;
+        }
+    });
+
+    container.innerHTML = '';
+
+    if (heatmapChart) heatmapChart.dispose();
+    heatmapChart = echarts.init(container);
+    heatmapChart.setOption({
+        tooltip: {
+            formatter: p => `${sortedDays[p.value[1]]} ${hours[p.value[0]]}:00<br/>Count: <b>${p.value[2]}</b>`
+        },
+        grid: { left: 100, right: 40, top: 20, bottom: 60 },
+        xAxis: { type: 'category', data: hours, name: 'Hour', splitArea: { show: true } },
+        yAxis: { type: 'category', data: sortedDays, name: 'Date', splitArea: { show: true } },
+        visualMap: {
+            min: 0, max: maxVal || 1, calculable: true, orient: 'horizontal',
+            left: 'center', bottom: 0,
+            inRange: { color: ['#f5f5f5', '#d0e8ff', '#1E90FF', '#DC143C'] }
+        },
+        series: [{
+            type: 'heatmap',
+            data: heatData,
+            label: { show: true, formatter: p => p.value[2] > 0 ? p.value[2] : '' },
+            emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } }
+        }]
+    }, true);
+}
+
+// ─── Stacked Bar Chart (ECharts) ───
+function updateStackedBarChart(data) {
+    if (!data || !Array.isArray(data) || data.length === 0) {
+        console.log("No data for Stacked Bar chart");
+        return;
+    }
+
+    let buckets = {};
+    let allTypes = new Set();
+    data.forEach(item => {
+        if (!item.second || !item.type) return;
+        let parts = item.second.split(' ');
+        if (parts.length < 2) return;
+        let hour = parts[0] + ' ' + parts[1].split(':')[0] + ':00';
+        allTypes.add(item.type);
+        if (!buckets[hour]) buckets[hour] = {};
+        buckets[hour][item.type] = (buckets[hour][item.type] || 0) + (item.count || 0);
+    });
+
+    let sortedTimes = Object.keys(buckets).sort();
+    let typeList = [...allTypes].sort();
+
+    let series = typeList.map(type => ({
+        name: type,
+        type: 'bar',
+        stack: 'total',
+        data: sortedTimes.map(t => buckets[t][type] || 0),
+        itemStyle: { color: getTypeColor(type, false, [], true) }
+    }));
+
+    if (!stackedBarChart) stackedBarChart = echarts.init(document.getElementById('stackedBarChart'));
+    stackedBarChart.setOption({
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: { type: 'scroll', top: 0 },
+        grid: { left: 60, right: 30, top: 50, bottom: 50 },
+        xAxis: { type: 'category', data: sortedTimes, name: 'Hour' },
+        yAxis: { type: 'value', name: 'Count' },
+        series: series
+    }, true);
+}
+
+// ─── Treemap Chart (ECharts native) ───
+function updateTreemapChart(data) {
+    if (!data || !Array.isArray(data) || data.length === 0) {
+        console.log("No data for treemap");
+        return;
+    }
+
+    let sorted = data
+        .filter(d => d && d.type_prefix && typeof d.count === 'number' && d.count > 0)
+        .sort((a, b) => b.count - a.count);
+
+    if (!treemapChart) treemapChart = echarts.init(document.getElementById('treemapChart'));
+    treemapChart.setOption({
+        tooltip: { formatter: '{b}: {c}' },
+        series: [{
+            type: 'treemap',
+            data: sorted.map(d => ({
+                name: d.type_prefix,
+                value: d.count,
+                itemStyle: { color: getTypeColor(d.type_prefix, false, [], true) }
+            })),
+            label: { show: true, formatter: '{b}\n{c}' },
+            breadcrumb: { show: false },
+            roam: false
+        }]
+    }, true);
+}
+
+// ─── Sync Gantt (ECharts custom series) ───
+function updateSyncGantt(logReportData) {
+    let container = document.getElementById('syncGanttChart');
+    if (!container) return;
+
+    const replicationStarts = logReportData?.["replicationStarts"] || [];
+    const replicationStats = logReportData?.["replicationStats"] || [];
+
+    if (replicationStarts.length === 0 && replicationStats.length === 0) {
+        if (syncGanttChart) { syncGanttChart.dispose(); syncGanttChart = null; }
+        container.innerHTML = '<p style="padding:20px;text-align:center;color:#888;">No sync data available</p>';
+        return;
+    }
+
+    let sessions = [];
+    let sorted = [...replicationStats].sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+    sorted.forEach((entry, i) => {
+        if (!entry.startTime) return;
+        let start = new Date(entry.startTime).getTime();
+        let end = (i + 1 < sorted.length && sorted[i+1].startTime)
+            ? new Date(sorted[i+1].startTime).getTime()
+            : start + 60000;
+        sessions.push({
+            pid: `PID:${entry.replicationProcessId || '?'}`,
+            start, end,
+            docCount: entry.documentsProcessedCount || 0,
+            rejectCount: entry.localWriteRejectionCount || 0
+        });
+    });
+
+    if (sessions.length === 0) return;
+
+    let pids = [...new Set(sessions.map(s => s.pid))].sort();
+    let pidColors = {};
+    let palette = ['#1E90FF','#32CD32','#FFA500','#9400D3','#FF69B4',
+                   '#00CED1','#DC143C','#FFD700','#8A2BE2','#008080'];
+    pids.forEach((p, i) => { pidColors[p] = palette[i % palette.length]; });
+
+    let ganttData = sessions.map(s => ({
+        name: s.pid,
+        value: [pids.indexOf(s.pid), s.start, s.end, s.end - s.start],
+        itemStyle: { color: pidColors[s.pid] },
+        docCount: s.docCount,
+        rejectCount: s.rejectCount
+    }));
+
+    function renderGanttItem(params, api) {
+        let catIndex = api.value(0);
+        let start = api.coord([api.value(1), catIndex]);
+        let end = api.coord([api.value(2), catIndex]);
+        let height = api.size([0, 1])[1] * 0.6;
+        let rect = echarts.graphic.clipRectByRect(
+            { x: start[0], y: start[1] - height / 2, width: end[0] - start[0], height: height },
+            { x: params.coordSys.x, y: params.coordSys.y,
+              width: params.coordSys.width, height: params.coordSys.height }
+        );
+        return rect && {
+            type: 'rect',
+            transition: ['shape'],
+            shape: rect,
+            style: api.style()
+        };
+    }
+
+    container.innerHTML = '';
+    if (syncGanttChart) syncGanttChart.dispose();
+    syncGanttChart = echarts.init(container);
+    syncGanttChart.setOption({
+        tooltip: {
+            formatter: function(p) {
+                let s = new Date(p.value[1]).toLocaleTimeString();
+                let e = new Date(p.value[2]).toLocaleTimeString();
+                let dur = Math.round(p.value[3] / 1000);
+                let lines = [`<b>${p.name}</b>`, `${s} → ${e}`, `Duration: ${dur}s`];
+                if (p.data.docCount) lines.push(`Docs: ${p.data.docCount}`);
+                if (p.data.rejectCount) lines.push(`<span style="color:red">Rejections: ${p.data.rejectCount}</span>`);
+                return lines.join('<br/>');
+            }
+        },
+        title: { text: 'Sync Sessions Gantt — Concurrent View', left: 'center' },
+        grid: { left: 100, right: 40, top: 50, bottom: 70 },
+        xAxis: {
+            type: 'time',
+            min: Math.min(...sessions.map(s => s.start)),
+            max: Math.max(...sessions.map(s => s.end)),
+            axisLabel: { rotate: 30, formatter: val => new Date(val).toLocaleTimeString() }
+        },
+        yAxis: { type: 'category', data: pids },
+        dataZoom: [
+            { type: 'slider', xAxisIndex: 0, bottom: 5 },
+            { type: 'inside', xAxisIndex: 0 }
+        ],
+        series: [{
+            type: 'custom',
+            renderItem: renderGanttItem,
+            encode: { x: [1, 2], y: 0 },
+            data: ganttData
+        }]
+    }, true);
+}
+
+// ─── Sync Timeline (ECharts horizontal bar) ───
+function updateSyncTimeline(logReportData) {
+    let container = document.getElementById('syncTimelineChart');
+    if (!container) return;
+
+    const replicationStarts = logReportData?.["replicationStarts"] || [];
+    const replicationStats = logReportData?.["replicationStats"] || [];
+
+    if (replicationStarts.length === 0 && replicationStats.length === 0) {
+        if (syncTimelineChart) { syncTimelineChart.dispose(); syncTimelineChart = null; }
+        container.innerHTML = '<p style="padding:20px;text-align:center;color:#888;">No sync data available</p>';
+        return;
+    }
+
+    let bars = [];
+    replicationStats.forEach((entry, i) => {
+        if (!entry.startTime) return;
+        let start = new Date(entry.startTime);
+        let docCount = entry.documentsProcessedCount || 0;
+        let rejectCount = entry.localWriteRejectionCount || 0;
+        let label = `PID:${entry.replicationProcessId || '?'}`;
+        let endTime;
+        if (i + 1 < replicationStats.length && replicationStats[i + 1].startTime) {
+            endTime = new Date(replicationStats[i + 1].startTime);
+        } else {
+            endTime = new Date(start.getTime() + 60000);
+        }
+        bars.push({
+            label: label,
+            start: start,
+            end: endTime,
+            docCount: docCount,
+            rejectCount: rejectCount,
+            hasError: rejectCount > 0
+        });
+    });
+
+    if (bars.length === 0) return;
+
+    container.innerHTML = '';
+    if (syncTimelineChart) syncTimelineChart.dispose();
+    syncTimelineChart = echarts.init(container);
+    syncTimelineChart.setOption({
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: function(params) {
+                let idx = params[0].dataIndex;
+                let b = bars[idx];
+                let lines = [`<b>#${idx+1} ${b.label}</b>`];
+                params.forEach(p => { lines.push(`${p.seriesName}: ${p.value}`); });
+                lines.push(`Start: ${b.start.toLocaleTimeString()}`);
+                lines.push(`End: ${b.end.toLocaleTimeString()}`);
+                return lines.join('<br/>');
+            }
+        },
+        legend: { top: 0 },
+        grid: { left: 120, right: 30, top: 50, bottom: 30 },
+        yAxis: { type: 'category', data: bars.map((b, i) => `#${i+1} ${b.label}`) },
+        xAxis: { type: 'value', name: 'Value' },
+        series: [
+            { name: 'Duration (sec)', type: 'bar', data: bars.map(b => Math.round((b.end - b.start) / 1000)),
+              itemStyle: { color: function(p) { return bars[p.dataIndex].hasError ? '#DC143C' : '#1E90FF'; } } },
+            { name: 'Docs Processed', type: 'bar', data: bars.map(b => b.docCount),
+              itemStyle: { color: 'rgba(50,205,50,0.7)' } },
+            { name: 'Write Rejections', type: 'bar', data: bars.map(b => b.rejectCount),
+              itemStyle: { color: 'rgba(255,69,0,0.7)' } }
+        ]
+    }, true);
+}

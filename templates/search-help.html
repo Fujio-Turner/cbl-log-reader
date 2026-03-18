@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html data-theme="corporate">
+<head>
+    <title>Search Help — CBL Log Reader</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-base-100 p-4 md:p-8 max-w-4xl mx-auto">
+
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-3xl font-bold">Search &amp; Filter Guide</h1>
+        <a href="/" class="btn btn-ghost btn-sm">← Back to Log Reader</a>
+    </div>
+
+    <p class="text-base-content/70 mb-6">
+        This tool helps you debug <strong>Couchbase Lite</strong> issues — slowness, errors, sync failures, and unexpected behavior.
+        Search through log entries, filter by type and time range, then drill into the raw data to see what happened before and after a problem.
+    </p>
+
+    <!-- Search Syntax -->
+    <div class="collapse collapse-arrow bg-base-200 mb-2">
+        <input type="radio" name="help-accordion" checked="checked" />
+        <div class="collapse-title font-semibold">Search Syntax</div>
+        <div class="collapse-content">
+            <p class="mb-3">Type your search in the search bar at the top of the sidebar. By default, all terms are <strong>AND</strong>ed together — every term must appear in the log line.</p>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>What you type</th>
+                            <th>What it does</th>
+                            <th>When to use it</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">push error</kbd></td>
+                            <td>Both terms required <span class="badge badge-sm badge-neutral">AND</span></td>
+                            <td>Find log lines mentioning both "push" and "error"</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">push OR error</kbd></td>
+                            <td>Either term matches <span class="badge badge-sm badge-info">OR</span></td>
+                            <td>Broaden search when you're not sure which term appears</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">-healthcheck</kbd></td>
+                            <td>Exclude term <span class="badge badge-sm badge-error">NOT</span></td>
+                            <td>Remove noisy log lines from results</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">NOT healthcheck</kbd></td>
+                            <td>Exclude term (same as <code>-</code>)</td>
+                            <td>Alternative negation syntax</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">"connection refused"</kbd></td>
+                            <td>Exact phrase match</td>
+                            <td>Find a specific error message or sequence of words</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">retry*</kbd></td>
+                            <td>Prefix match (retry, retrying, retries…)</td>
+                            <td>Match word variations without typing each one</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">error</kbd> or <kbd class="kbd kbd-sm">errors</kbd></td>
+                            <td>Shortcut: filters for <code>error=true</code> docs</td>
+                            <td>Quickly find all error log entries</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Field Filters -->
+    <div class="collapse collapse-arrow bg-base-200 mb-2">
+        <input type="radio" name="help-accordion" />
+        <div class="collapse-title font-semibold">Field-Specific Filters</div>
+        <div class="collapse-content">
+            <p class="mb-3">Target a specific field instead of searching all log text. Use the format <kbd class="kbd kbd-sm">field:value</kbd>.</p>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Example</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>type</code></td>
+                            <td><span class="badge badge-sm">text</span></td>
+                            <td><kbd class="kbd kbd-sm">type:Sync</kbd></td>
+                            <td>Full log type (e.g. <code>Sync:Active</code>)</td>
+                        </tr>
+                        <tr>
+                            <td><code>mainType</code></td>
+                            <td><span class="badge badge-sm">text</span></td>
+                            <td><kbd class="kbd kbd-sm">mainType:BLIP</kbd></td>
+                            <td>Top-level type only (e.g. <code>Sync</code>, <code>BLIP</code>)</td>
+                        </tr>
+                        <tr>
+                            <td><code>processId</code> or <code>pid</code></td>
+                            <td><span class="badge badge-sm badge-warning">number</span></td>
+                            <td><kbd class="kbd kbd-sm">pid:1047</kbd></td>
+                            <td>Must be numeric — wildcards not allowed</td>
+                        </tr>
+                        <tr>
+                            <td><code>error</code></td>
+                            <td><span class="badge badge-sm badge-error">boolean</span></td>
+                            <td><kbd class="kbd kbd-sm">error:true</kbd></td>
+                            <td>Accepts: <code>true</code>/<code>false</code>, <code>yes</code>/<code>no</code>, <code>1</code>/<code>0</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>rawLog</code></td>
+                            <td><span class="badge badge-sm">text</span></td>
+                            <td><kbd class="kbd kbd-sm">rawLog:timeout</kbd></td>
+                            <td>The raw log line content (default search field)</td>
+                        </tr>
+                        <tr>
+                            <td><code>dt</code></td>
+                            <td><span class="badge badge-sm badge-accent">datetime</span></td>
+                            <td>—</td>
+                            <td>ISO timestamp — use the date pickers instead</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="mt-3 text-sm text-base-content/60">
+                <strong>Tip:</strong> Field names are case-insensitive in search — <code>processid:1047</code>, <code>ProcessId:1047</code>, and <code>pid:1047</code> all work.
+            </div>
+        </div>
+    </div>
+
+    <!-- Combining Searches -->
+    <div class="collapse collapse-arrow bg-base-200 mb-2">
+        <input type="radio" name="help-accordion" />
+        <div class="collapse-title font-semibold">Combining Searches</div>
+        <div class="collapse-content">
+            <p class="mb-3">You can combine multiple terms, field filters, and operators in a single search.</p>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Example</th>
+                            <th>What it finds</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">type:Sync AND error:true</kbd></td>
+                            <td>Sync-type log entries that are errors</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">push AND error -healthcheck</kbd></td>
+                            <td>Logs with "push" and "error", excluding "healthcheck"</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">pid:1047 "connection refused"</kbd></td>
+                            <td>Exact phrase in a specific process</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">timeout OR "timed out"</kbd></td>
+                            <td>Either the word "timeout" or the phrase "timed out"</td>
+                        </tr>
+                        <tr>
+                            <td><kbd class="kbd kbd-sm">retry* -healthcheck -ping</kbd></td>
+                            <td>Anything starting with "retry", excluding noise</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar Controls -->
+    <div class="collapse collapse-arrow bg-base-200 mb-2">
+        <input type="radio" name="help-accordion" />
+        <div class="collapse-title font-semibold">Sidebar Controls</div>
+        <div class="collapse-content">
+            <div class="space-y-4">
+                <div class="card bg-base-100 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="card-title text-sm">Type Mode</h3>
+                        <p class="text-sm"><strong>General Type</strong> — Groups logs by top-level type (e.g. <code>Sync</code>, <code>BLIP</code>, <code>DB</code>). Best for getting an overview.</p>
+                        <p class="text-sm"><strong>Specific Type</strong> — Uses the full type (e.g. <code>Sync:Active</code>, <code>BLIP:WebSocket</code>). Use when you need to drill into a specific subsystem.</p>
+                    </div>
+                </div>
+                <div class="card bg-base-100 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="card-title text-sm">Type Select</h3>
+                        <p class="text-sm">Multi-select list of all log types found in the data. Select one or more to filter the chart and raw data. Use <strong>Select All</strong> / <strong>Unselect All</strong> to toggle quickly. The special <code>Error</code> entry filters for logs with <code>error=true</code>.</p>
+                    </div>
+                </div>
+                <div class="card bg-base-100 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="card-title text-sm">Grouping Mode</h3>
+                        <p class="text-sm"><strong>By Second</strong> — Chart shows log counts per second. Best for short time ranges or finding precise spikes.</p>
+                        <p class="text-sm"><strong>By Minute</strong> — Aggregates per minute. Better for longer time ranges to see overall patterns.</p>
+                    </div>
+                </div>
+                <div class="card bg-base-100 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="card-title text-sm">Date Range</h3>
+                        <p class="text-sm">Set start and end timestamps to narrow your search window. The date pickers include seconds for precision. Dates auto-populate from the earliest and latest log entries in the data.</p>
+                    </div>
+                </div>
+                <div class="card bg-base-100 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="card-title text-sm">Result Limit</h3>
+                        <p class="text-sm">Controls how many raw log rows are returned. Default is 500. Higher limits show more data but take longer to load. <span class="badge badge-sm badge-warning">None</span> removes the limit entirely — use with caution on large datasets.</p>
+                    </div>
+                </div>
+                <div class="card bg-base-100 shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="card-title text-sm">Chart Scale (Linear / Logarithmic)</h3>
+                        <p class="text-sm"><strong>Linear</strong> — Standard scale. Good when log volume is fairly even.</p>
+                        <p class="text-sm"><strong>Logarithmic</strong> — Compressed scale. Use when a few spikes make it hard to see smaller counts.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Debugging Workflow -->
+    <div class="collapse collapse-arrow bg-base-200 mb-2">
+        <input type="radio" name="help-accordion" />
+        <div class="collapse-title font-semibold">Debugging Workflow</div>
+        <div class="collapse-content">
+            <p class="mb-3">Common patterns for finding and investigating Couchbase Lite issues:</p>
+            <ul class="steps steps-vertical text-sm">
+                <li class="step step-primary">
+                    <div class="text-left">
+                        <strong>Start broad</strong> — Load all logs for the time range. Look at the chart for spikes or unusual patterns.
+                    </div>
+                </li>
+                <li class="step step-primary">
+                    <div class="text-left">
+                        <strong>Find errors</strong> — Type <kbd class="kbd kbd-xs">error</kbd> in search or select the <code>Error</code> type to see all error entries. Note the timestamps.
+                    </div>
+                </li>
+                <li class="step step-primary">
+                    <div class="text-left">
+                        <strong>Narrow the time window</strong> — Set the date range to just before and after the error spike. Switch to "By Second" grouping for precision.
+                    </div>
+                </li>
+                <li class="step step-primary">
+                    <div class="text-left">
+                        <strong>Filter by type</strong> — Select only <code>Sync</code> or <code>BLIP</code> types to focus on replication issues. Use Specific Type mode for more detail.
+                    </div>
+                </li>
+                <li class="step step-primary">
+                    <div class="text-left">
+                        <strong>Examine raw logs</strong> — Scroll through the raw data table. Use <strong>Stakes</strong> to bookmark rows you want to compare. Look at what happened before and after the error.
+                    </div>
+                </li>
+                <li class="step step-primary">
+                    <div class="text-left">
+                        <strong>Isolate by process</strong> — Use <kbd class="kbd kbd-xs">pid:1047</kbd> to see only logs from a specific process, filtering out noise from other processes.
+                    </div>
+                </li>
+            </ul>
+
+            <div class="divider"></div>
+            <h4 class="font-semibold mb-2">Common Searches for CBL Debugging</h4>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Issue</th>
+                            <th>Search</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Sync errors</td>
+                            <td><kbd class="kbd kbd-sm">type:Sync error:true</kbd></td>
+                        </tr>
+                        <tr>
+                            <td>Connection problems</td>
+                            <td><kbd class="kbd kbd-sm">"connection refused" OR timeout OR "timed out"</kbd></td>
+                        </tr>
+                        <tr>
+                            <td>Replication failures</td>
+                            <td><kbd class="kbd kbd-sm">type:Sync push error</kbd></td>
+                        </tr>
+                        <tr>
+                            <td>WebSocket issues</td>
+                            <td><kbd class="kbd kbd-sm">mainType:BLIP error:true</kbd></td>
+                        </tr>
+                        <tr>
+                            <td>Slow operations</td>
+                            <td><kbd class="kbd kbd-sm">slow* OR timeout*</kbd></td>
+                        </tr>
+                        <tr>
+                            <td>Everything except noise</td>
+                            <td><kbd class="kbd kbd-sm">-healthcheck -ping -heartbeat</kbd></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Important Notes -->
+    <div class="collapse collapse-arrow bg-base-200 mb-2">
+        <input type="radio" name="help-accordion" />
+        <div class="collapse-title font-semibold">Important Notes</div>
+        <div class="collapse-content text-sm space-y-2">
+            <div class="alert">
+                <span><strong>Full-text search, not substring search.</strong> The search engine tokenizes text into words. Searching for <code>time</code> will not match <code>timeout</code> — use <code>time*</code> for prefix matching.</span>
+            </div>
+            <div class="alert">
+                <span><strong>Leading wildcards (<code>*foo</code>) are not supported.</strong> Use prefix wildcards only: <code>foo*</code>.</span>
+            </div>
+            <div class="alert">
+                <span><strong>processId is numeric.</strong> You cannot use wildcards on process IDs. Use exact values like <code>pid:1047</code>.</span>
+            </div>
+            <div class="alert">
+                <span><strong>Negative-only queries need a base.</strong> A search like <code>-healthcheck</code> alone needs date/type filters to have something to exclude from.</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="text-center text-base-content/40 text-sm mt-8 mb-4">
+        Couchbase Lite Log Reader — Search Help
+    </div>
+
+</body>
+</html>

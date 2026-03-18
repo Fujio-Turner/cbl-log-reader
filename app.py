@@ -5,13 +5,14 @@ from couchbase.auth import PasswordAuthenticator
 from couchbase.exceptions import CouchbaseException, DocumentNotFoundException
 import json
 import sys
+import os
 import hashlib
 import re
 from datetime import datetime, timedelta
 
 # Global FTS index name
 FTS_INDEX_NAME = "cbl_rawLog_v3"
-web_port = 5000
+web_port = 5099
 
 print("Starting app.py ")
 
@@ -40,8 +41,9 @@ if missing_keys:
     if DEBUG: print(f"Error: Missing required configuration keys in {config_file}: {missing_keys}")
     exit(1)
 
+cb_host = os.environ.get('CBL_CB_HOST', config['cb-cluster-host'])
 try:
-    cluster = Cluster(f"couchbase://{config['cb-cluster-host']}", 
+    cluster = Cluster(f"couchbase://{cb_host}", 
                       ClusterOptions(PasswordAuthenticator(config['cb-bucket-user'], config['cb-bucket-user-password'])))
     bucket = cluster.bucket(config['cb-bucket-name'])
     collection = bucket.default_collection()
@@ -51,38 +53,100 @@ except Exception as e:
     if DEBUG: print(f"Error connecting to Couchbase cluster: {e}")
     exit(1)
 
-def escape_fts_query_string(search_term):
-    escaped_term = ''
-    for char in search_term:
-        if char == '*':
-            escaped_term += '\\*'
-        elif char == '/':
-            escaped_term += '\\/'
+FIELD_ALIASES = {
+    "rawlog": "rawLog",
+    "type": "type",
+    "maintype": "mainType",
+    "processid": "processId",
+    "pid": "processId",
+    "error": "error",
+    "dt": "dt",
+    "dtepoch": "dtEpoch",
+}
+
+def resolve_field(field_name):
+    """Resolve user-typed field name to actual index field name via alias map."""
+    resolved = FIELD_ALIASES.get(field_name.lower())
+    if resolved is None:
+        raise ValueError(f"Unknown field: '{field_name}'. Valid fields: {', '.join(sorted(set(FIELD_ALIASES.values())))}")
+    return resolved
+
+def build_leaf(field, value, is_phrase=False):
+    """Build a single FTS leaf clause based on field type and value."""
+    if field == "processId":
+        try:
+            int_value = int(value)
+            return {
+                "field": "processId",
+                "min": int_value,
+                "max": int_value,
+                "inclusive_min": True,
+                "inclusive_max": True
+            }
+        except ValueError:
+            raise ValueError(f"processId must be numeric, got: '{value}'")
+    elif field == "error":
+        lower_val = value.lower()
+        if lower_val in ("true", "yes", "1"):
+            return {"field": "error", "bool": True}
+        elif lower_val in ("false", "no", "0"):
+            return {"field": "error", "bool": False}
         else:
-            escaped_term += char
-    return escaped_term
+            raise ValueError(f"error field must be true/false/yes/no/1/0, got: '{value}'")
+    elif is_phrase:
+        return {"match_phrase": value, "field": field}
+    elif value.endswith("*") and value.count("*") == 1:
+        return {"prefix": value[:-1], "field": field}
+    elif "*" in value:
+        return {"wildcard": value, "field": field}
+    else:
+        return {"match": value, "field": field}
 
-def escape_search_term(search_term):
-    fts_escaped = escape_fts_query_string(search_term)
-    n1ql_escaped = fts_escaped.replace('\\', '\\\\').replace("'", "''")
-    return n1ql_escaped
-
-def build_fts_query(search_term, field_name):
+def tokenize_search(search_term):
     """
-    Build a Full-Text Search query string for Couchbase N1QL SEARCH() function.
-    
-    Args:
-        search_term (str): The raw search term from the user (e.g., "ws:// AND endpoint*").
-        field_name (str): The field to search (e.g., "rawLog").
-    
-    Returns:
-        str: A properly formatted FTS query string for direct embedding.
+    Tokenize search input into structured tokens.
+    Handles quoted phrases, field:value, operators (AND/OR/NOT), and negation (-term).
+    Returns list of dicts: {"type": "term"|"phrase"|"operator"|"field", "value": str, "field": str|None, "negated": bool}
     """
-    # Escape forward slashes for FTS syntax
-    escaped_term = search_term.replace('/', '\\/')
-    # Escape single quotes for N1QL to prevent SQL injection
-    n1ql_escaped_term = escaped_term.replace("'", "''")
-    return n1ql_escaped_term
+    tokens = []
+    i = 0
+    s = search_term.strip()
+    while i < len(s):
+        # Skip whitespace
+        if s[i] == ' ':
+            i += 1
+            continue
+        # Quoted phrase
+        if s[i] == '"':
+            end = s.find('"', i + 1)
+            if end == -1:
+                end = len(s)
+            phrase = s[i+1:end]
+            tokens.append({"type": "phrase", "value": phrase, "field": None, "negated": False})
+            i = end + 1
+            continue
+        # Collect a word (until space or quote)
+        j = i
+        while j < len(s) and s[j] != ' ' and s[j] != '"':
+            j += 1
+        word = s[i:j]
+        i = j
+        # Check for operators
+        if word.upper() in ("AND", "OR", "NOT"):
+            tokens.append({"type": "operator", "value": word.upper(), "field": None, "negated": False})
+            continue
+        # Check for negation
+        negated = False
+        if word.startswith("-") and len(word) > 1:
+            negated = True
+            word = word[1:]
+        # Check for field:value
+        if ":" in word:
+            field_part, value_part = word.split(":", 1)
+            tokens.append({"type": "field", "value": value_part, "field": field_part, "negated": negated})
+        else:
+            tokens.append({"type": "term", "value": word, "field": None, "negated": negated})
+    return tokens
 
 def build_fts_query_2(filters):
     use_specific_type = filters.get('use_specific_type', False)
@@ -97,27 +161,39 @@ def build_fts_query_2(filters):
         limit = 500
 
     fts_query = {
-        "explain": True,
         "fields": ["*"],
         "highlight": {},
         "query": {
-            "conjuncts": [],
-            "disjuncts": []
+            "conjuncts": []
         },
         "index": FTS_INDEX_NAME,
         "sort": [{"by": "field", "field": "dtEpoch", "mode": "min", "missing": "last"}]
     }
 
+    if DEBUG:
+        fts_query["explain"] = True
+
     if limit > 0:
         fts_query["size"] = limit
 
     # Add date range to conjuncts (required condition)
-    if start_date and end_date:
+    # Prefer raw epoch values from chart zoom (avoids timezone conversion issues)
+    start_epoch = filters.get('start_epoch')
+    end_epoch = filters.get('end_epoch')
+    if start_epoch and end_epoch:
+        fts_query["query"]["conjuncts"].append({
+            "field": "dtEpoch",
+            "min": float(start_epoch),
+            "max": float(end_epoch),
+            "inclusive_min": True,
+            "inclusive_max": True
+        })
+    elif start_date and end_date:
         try:
-            start_dt = datetime.strptime(start_date.replace(" ", "T") if "T" not in start_date else start_date, 
-                                       "%Y-%m-%dT%H:%M:%S.%f" if '.' in start_date else "%Y-%m-%dT%H:%M:%S")
-            end_dt = datetime.strptime(end_date.replace(" ", "T") if "T" not in end_date else end_date, 
-                                     "%Y-%m-%dT%H:%M:%S.%f" if '.' in end_date else "%Y-%m-%dT%H:%M:%S")
+            start_dt = datetime.strptime(start_date.replace(" ", "T") if "T" not in start_date else start_date,
+                                        "%Y-%m-%dT%H:%M:%S.%f" if '.' in start_date else "%Y-%m-%dT%H:%M:%S")
+            end_dt = datetime.strptime(end_date.replace(" ", "T") if "T" not in end_date else end_date,
+                                      "%Y-%m-%dT%H:%M:%S.%f" if '.' in end_date else "%Y-%m-%dT%H:%M:%S")
             fts_query["query"]["conjuncts"].append({
                 "field": "dtEpoch",
                 "min": start_dt.timestamp(),
@@ -131,135 +207,92 @@ def build_fts_query_2(filters):
     # Handle search term
     if search_term:
         search_term = search_term.lstrip('+')
-        # Special case for "error", "Errors", or "errors"
-        if search_term.lower() in ['error', 'errors']:
+        # Special case for bare "error" / "errors"
+        if search_term.strip().lower() in ('error', 'errors'):
             fts_query["query"]["conjuncts"].append({
                 "field": "error",
                 "bool": True
             })
-        elif any(op in search_term.upper() for op in [' AND ', ' OR ', ' NOT ']):
-            terms = re.split(r'(\s+(?:AND|OR|NOT)\s+)', search_term, flags=re.IGNORECASE)
-            terms = [t.strip() for t in terms if t.strip()]
-            for term in terms:
-                if term.upper() in ['AND', 'OR', 'NOT']:
-                    if term.upper() == 'OR' and DEBUG:
-                        print("Warning: OR in disjuncts; terms will boost relevance")
-                    if term.upper() == 'NOT' and DEBUG:
-                        print("Warning: NOT not fully supported; ignoring")
-                    continue
-                field_value = term[1:] if term.startswith('+') else term
-                if ':' in field_value:
-                    field, value = field_value.split(':', 1)
-                    field = field.strip().lower()
-                    value = value.strip()
-                    if field == "processid":
-                        try:
-                            int_value = int(value)
-                            fts_query["query"]["conjuncts"].append({
-                                "field": "processId",
-                                "min": int_value,
-                                "max": int_value,
-                                "inclusive_min": True,
-                                "inclusive_max": True
-                            })
-                        except ValueError:
-                            if '*' in value:
-                                fts_query["query"]["disjuncts"].append({
-                                    "wildcard": escape_fts_query_string(value),
-                                    "field": "processId"
-                                })
-                            else:
-                                fts_query["query"]["disjuncts"].append({
-                                    "match": escape_fts_query_string(value),
-                                    "field": "processId"
-                                })
-                    else:
-                        if '*' in value:
-                            fts_query["query"]["disjuncts"].append({
-                                "wildcard": escape_fts_query_string(value),
-                                "field": field
-                            })
-                        else:
-                            fts_query["query"]["disjuncts"].append({
-                                "match": escape_fts_query_string(value),
-                                "field": field
-                            })
-                else:
-                    if '*' in field_value:
-                        fts_query["query"]["disjuncts"].append({
-                            "wildcard": escape_fts_query_string(field_value),
-                            "field": "rawLog"
-                        })
-                    else:
-                        fts_query["query"]["disjuncts"].append({
-                            "match": escape_fts_query_string(field_value),
-                            "field": "rawLog"
-                        })
-        elif ':' in search_term:
-            field_value = search_term[1:] if search_term.startswith('+') else search_term
-            field, value = field_value.split(':', 1)
-            field = field.strip().lower()
-            value = value.strip()
-            if field == "processid":
-                try:
-                    int_value = int(value)
-                    fts_query["query"]["conjuncts"].append({
-                        "field": "processId",
-                        "min": int_value,
-                        "max": int_value,
-                        "inclusive_min": True,
-                        "inclusive_max": True
-                    })
-                except ValueError:
-                    if '*' in value:
-                        fts_query["query"]["disjuncts"].append({
-                            "wildcard": escape_fts_query_string(value),
-                            "field": "processId"
-                        })
-                    else:
-                        fts_query["query"]["disjuncts"].append({
-                            "match": escape_fts_query_string(value),
-                            "field": "processId"
-                        })
-            else:
-                if '*' in value:
-                    fts_query["query"]["disjuncts"].append({
-                        "wildcard": escape_fts_query_string(value),
-                        "field": field
-                    })
-                else:
-                    fts_query["query"]["disjuncts"].append({
-                        "match": escape_fts_query_string(value),
-                        "field": field
-                    })
         else:
-            if '*' in search_term:
-                fts_query["query"]["disjuncts"].append({
-                    "wildcard": escape_fts_query_string(search_term),
-                    "field": "rawLog"
-                })
-            else:
-                fts_query["query"]["disjuncts"].append({
-                    "match": escape_fts_query_string(search_term),
-                    "field": "rawLog"
+            tokens = tokenize_search(search_term)
+            # Split tokens by OR into groups; each group is ANDed together
+            or_groups = []
+            current_group = []
+            must_not_clauses = []
+            # Track the operator context
+            i = 0
+            while i < len(tokens):
+                tok = tokens[i]
+                if tok["type"] == "operator":
+                    if tok["value"] == "OR":
+                        or_groups.append(current_group)
+                        current_group = []
+                    elif tok["value"] == "NOT":
+                        # Next token is negated
+                        if i + 1 < len(tokens):
+                            next_tok = tokens[i + 1]
+                            next_tok["negated"] = True
+                            # Let the next iteration handle it
+                    # AND is default, just continue
+                    i += 1
+                    continue
+
+                # Build the leaf clause
+                if tok["field"] is not None:
+                    field = resolve_field(tok["field"])
+                    clause = build_leaf(field, tok["value"])
+                else:
+                    is_phrase = (tok["type"] == "phrase")
+                    clause = build_leaf("rawLog", tok["value"], is_phrase=is_phrase)
+
+                if tok["negated"]:
+                    must_not_clauses.append(clause)
+                else:
+                    current_group.append(clause)
+                i += 1
+
+            # Don't forget the last group
+            if current_group:
+                or_groups.append(current_group)
+
+            # Build the boolean tree
+            if or_groups:
+                if len(or_groups) == 1 and len(or_groups[0]) == 1 and not must_not_clauses:
+                    # Single term, add directly
+                    fts_query["query"]["conjuncts"].append(or_groups[0][0])
+                elif len(or_groups) == 1:
+                    # Single AND group
+                    for clause in or_groups[0]:
+                        fts_query["query"]["conjuncts"].append(clause)
+                else:
+                    # Multiple OR groups: each group is a conjuncts, wrapped in disjuncts
+                    or_clauses = []
+                    for group in or_groups:
+                        if len(group) == 1:
+                            or_clauses.append(group[0])
+                        else:
+                            or_clauses.append({"conjuncts": group})
+                    fts_query["query"]["conjuncts"].append({"disjuncts": or_clauses})
+
+            if must_not_clauses:
+                fts_query["query"]["conjuncts"].append({
+                    "must_not": {"disjuncts": must_not_clauses}
                 })
 
     # Handle type filters
     if not all_type_selected and types:
-        # Create a disjuncts array for types (OR condition among types)
         type_disjuncts = []
         for t in types:
             if '*' in t:
                 type_disjuncts.append({
-                    "wildcard": escape_fts_query_string(t),
+                    "wildcard": t,
                     "field": "type"
                 })
             else:
                 type_disjuncts.append({
-                    "match": escape_fts_query_string(t),
+                    "match": t,
                     "field": "type"
                 })
-        # Add the type disjuncts as a required condition in conjuncts
         if type_disjuncts:
             fts_query["query"]["conjuncts"].append({
                 "disjuncts": type_disjuncts
@@ -268,9 +301,7 @@ def build_fts_query_2(filters):
     # Clean up empty arrays
     if not fts_query["query"]["conjuncts"]:
         del fts_query["query"]["conjuncts"]
-    if not fts_query["query"]["disjuncts"]:
-        del fts_query["query"]["disjuncts"]
-    if not fts_query["query"].get("conjuncts") and not fts_query["query"].get("disjuncts"):
+    if not fts_query["query"].get("conjuncts"):
         fts_query["query"] = {"match_all": {}}
 
     return json.dumps(fts_query, ensure_ascii=False)
@@ -278,6 +309,16 @@ def build_fts_query_2(filters):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/search-help')
+def search_help():
+    return render_template('search-help.html')
+
+@app.route('/debug_query', methods=['POST'])
+def debug_query():
+    filters = request.get_json()
+    fts_query_str = build_fts_query_2(filters)
+    return jsonify({"fts_query": json.loads(fts_query_str), "filters": filters})
 
 @app.route('/get_date_range', methods=['GET'])
 def get_date_range():

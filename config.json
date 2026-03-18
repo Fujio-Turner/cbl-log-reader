@@ -1,6 +1,6 @@
 {
-    "file-to-parse": "/path/to/file",
-    "file-parse-type": "info",   
+    "file-to-parse": "/Users/fujio.turner/Documents/GitHub/cbl-log-reader/cbl_logs/cbl-log-all.txt",
+    "file-parse-type": "info|error|debug|verbose|warning",   
     "cb-cluster-host": "127.0.0.1",
     "cb-bucket-name": "cbl-log-reader",
     "cb-bucket-user": "Administrator",

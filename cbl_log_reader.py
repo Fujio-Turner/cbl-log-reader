@@ -38,13 +38,13 @@ class LogReader():
     def readConfigFile(self, configFile):
         with open(configFile, "rb") as f:
             config = json.loads(f.read())
-            self.cbHost = config["cb-cluster-host"]
+            self.cbHost = os.environ.get('CBL_CB_HOST', config["cb-cluster-host"])
             self.cbBucketName = config["cb-bucket-name"]
             self.cbUser = config["cb-bucket-user"]
             self.cbPass = config["cb-bucket-user-password"]
             self.debug = config["debug"]
             self.cbTtl = config['cb-expire']
-            self.file_to_parse = config['file-to-parse']
+            self.file_to_parse = os.environ.get('CBL_FILE_TO_PARSE', config['file-to-parse'])
             self.file_parse_type = config.get('file-parse-type', "info|error|debug|verbose|warning")
             self.autoStartDashboard = config.get('auto-start-dashboard', False)
 
@@ -87,7 +87,7 @@ class LogReader():
         if full_date_match:
             dt_str = full_date_match.group(1)
             dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))  # Parse ISO-8601
-            return [dt_str, True, dt.timestamp()]  # Return float timestamp with microsecond precision
+            return [dt_str, True, dt.timestamp()]
 
         time_only_pattern = r'^(\d{2}:\d{2}:\d{2}\.\d+)\|'
         time_only_match = re.search(time_only_pattern, log_line)
@@ -95,7 +95,7 @@ class LogReader():
             time_str = time_only_match.group(1)  # e.g., "11:30:45.123456"
             current_time = datetime.strptime(time_str, "%H:%M:%S.%f")
 
-            # Use yesterday as base date (March 27, 2025, since today is March 28)
+            # Use yesterday as base date
             base_date = datetime.now().date() - timedelta(days=1)
             
             # Check for day rollover by comparing with the last timestamp
@@ -111,42 +111,11 @@ class LogReader():
             # Combine base date and time into ISO-8601
             dt = datetime.combine(base_date, current_time.time())
             iso_date = dt.isoformat()
-            epoch = dt.timestamp()  # Return float timestamp with microsecond precision
+            epoch = dt.timestamp()
             return [iso_date, False, epoch]
         
         return [None, False, None]  # Return [dt, full_date_flag, epoch]
-    '''
 
-    def extract_timestamp(self, log_line):
-        full_date_pattern = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}:\d{2})?)\|'
-        full_date_match = re.search(full_date_pattern, log_line)
-        if full_date_match:
-            dt_str = full_date_match.group(1)
-            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-            return [dt_str, True, dt.timestamp()]
-
-        time_only_pattern = r'^(\d{2}:\d{2}:\d{2}\.\d+)\|'
-        time_only_match = re.search(time_only_pattern, log_line)
-        if time_only_match:
-            time_str = time_only_match.group(1)  # e.g., "17:24:02.456955"
-            current_time = datetime.strptime(time_str, "%H:%M:%S.%f")
-            # Use yesterday as base date for epoch calculation only
-            base_date = datetime.now().date() - timedelta(days=1)
-            
-            if not hasattr(self, 'last_time'):
-                self.last_time = None
-            
-            if self.last_time and current_time < self.last_time:
-                base_date = datetime.now().date()  # Today if rollover
-            
-            self.last_time = current_time
-            
-            dt = datetime.combine(base_date, current_time.time())
-            epoch = dt.timestamp()
-            return [time_str, False, epoch]  # Return original time string, not ISO
-        
-        return [None, False, None]
-    '''
     
 
     def find_error_in_line(self, line, is_full_date):
@@ -1079,28 +1048,22 @@ class LogReader():
         )
 
         if os.path.isfile(self.file_to_parse):
-            if self.file_to_parse.lower().endswith(('.txt', '.log')):
-                filename = os.path.basename(self.file_to_parse).lower()
-                if any(ft.lower() in filename for ft in file_types):
-                    self.process_single_file(self.file_to_parse)
-                    self.generate_report()
-                else:
-                    print(f"Error: {self.file_to_parse} does not match known log types ({self.file_parse_type})")
-                    print(error_message)
-                    exit()
+            if self.file_to_parse.lower().endswith(('.txt', '.log', '.cbllog')):
+                self.process_single_file(self.file_to_parse)
+                self.generate_report()
             else:
-                print(f"Error: {self.file_to_parse} is not a .txt or .log file")
+                print(f"Error: {self.file_to_parse} is not a .txt, .log, or .cbllog file")
                 exit()
         elif os.path.isdir(self.file_to_parse):
             matching_files = []
             for filename in os.listdir(self.file_to_parse):
                 full_path = os.path.join(self.file_to_parse, filename)
-                if os.path.isfile(full_path) and filename.lower().endswith(('.txt', '.log')):
+                if os.path.isfile(full_path) and filename.lower().endswith(('.txt', '.log', '.cbllog')):
                     if any(ft.lower() in filename.lower() for ft in file_types):
                         matching_files.append(full_path)
             
             if not matching_files:
-                print(f"No matching .txt or .log files found in {self.file_to_parse} with types {self.file_parse_type}")
+                print(f"No matching .txt, .log, or .cbllog files found in {self.file_to_parse} with types {self.file_parse_type}")
                 print(error_message)
                 exit()
             
